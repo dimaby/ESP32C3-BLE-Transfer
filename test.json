@@ -1,0 +1,25 @@
+{
+  "lock": {
+    "htop_secret": "08lOBSY4i4qpMEWeZ197QEqXgzN5RL5p",
+    "counter_sync": 0,
+    "disable_hotp_counter": false
+  },
+  "settings": {
+    "disable_sleep_flag": true,
+    "lock_delay_time": 1000,
+    "pin_lock_channel_1": 9,
+    "pin_lock_channel_2": 9,
+    "pin_led": 2,
+    "pin_wakeup": 0,
+    "ble_tx_power_dBm": 21,
+    "relay_type": "uart",
+    "name_device": "SMBP-4IQ6WCLG"
+  },
+  "dis": {
+    "manufacturer": "Manufacturer 1",
+    "model": "Model 2",
+    "serial_number": "4IQ6WCLG",
+    "hardware_revision": "1.0"
+  },
+  "auth_token": "y9XgaNhvNI4GaDcRaEwzL8VBDgGZkN8a"
+}
