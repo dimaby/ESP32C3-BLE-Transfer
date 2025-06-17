@@ -8,6 +8,8 @@ from pathlib import Path
 
 from bleak import BleakScanner, BleakClient
 
+DEVICE_NAME = "BLETT"
+
 SERVICE_UUID = "12345678-1234-1234-1234-1234567890ab"
 CHAR_UUID = "abcd1234-5678-90ab-cdef-1234567890ab"
 
@@ -18,9 +20,14 @@ def parse_args():
 
 async def run(file_path: Path):
     data = file_path.read_text()
-    print(f"Searching for BLE device advertising 'BLETT' ...")
+    print(f"Searching for BLE device advertising '{DEVICE_NAME}' ...")
     device = await BleakScanner.find_device_by_filter(
-        lambda d, ad: d.name == "BLETT"
+        lambda d, ad: (
+            (d.name and d.name == DEVICE_NAME)
+            or (ad and ad.local_name == DEVICE_NAME)
+        ),
+        service_uuids=[SERVICE_UUID],
+        timeout=10.0,
     )
     if not device:
         print("Device not found")
