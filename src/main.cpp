@@ -1,53 +1,72 @@
 #include <Arduino.h>
 #include <BLEDevice.h>
-#include <BLEUtils.h>
 #include <BLEServer.h>
+#include "ChunkedBLEProtocol.h"
 
-static BLECharacteristic *pCharacteristic;
-static std::string lastJson = "";
-static unsigned long lastWrite = 0;
+// Global objects
+BLEServer* pServer = nullptr;
+ChunkedBLEProtocol* protocol = nullptr;
 
-#define SERVICE_UUID "12345678-1234-1234-1234-1234567890ab"
-#define CHAR_UUID    "abcd1234-5678-90ab-cdef-1234567890ab"
-
-class JsonCallback : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic *pChar) override {
-    std::string value = pChar->getValue();
-    if (value.length() > 0) {
-      Serial.print("Received JSON: ");
-      Serial.println(value.c_str());
-      lastJson = value;
-      lastWrite = millis();
+// Application callbacks
+void onDataReceived(const std::string& data) {
+    Serial.println("[APP] Complete JSON data received, will respond in 5 seconds");
+    
+    // Process received JSON data here
+    // For demo, we'll echo it back after a delay
+    
+    delay(5000); // Simulate processing time
+    
+    Serial.println("[APP] Sending response back to client...");
+    if (protocol && protocol->isDeviceConnected()) {
+        protocol->sendData(data); // Echo back the same data
+        Serial.println("[APP] Response sent successfully");
     }
-  }
-};
+}
+
+void onConnectionChanged(bool connected) {
+    if (connected) {
+        Serial.println("[APP] Client connected - ready for data exchange");
+    } else {
+        Serial.println("[APP] Client disconnected - clearing pending responses");
+        
+        // Restart advertising for next connection
+        Serial.println("[APP] Connection lost, restarting advertising");
+        BLEDevice::startAdvertising();
+        Serial.println("[BLE] Advertising restarted");
+    }
+}
+
+void onProgress(int current, int total, bool isReceiving) {
+    const char* direction = isReceiving ? "Receiving" : "Sending";
+    Serial.printf("[PROGRESS] %s: %d/%d chunks\n", direction, current, total);
+}
 
 void setup() {
-  Serial.begin(115200);
-  BLEDevice::init("BLETT");
-  BLEServer *pServer = BLEDevice::createServer();
-  BLEService *pService = pServer->createService(SERVICE_UUID);
-  pCharacteristic = pService->createCharacteristic(
-                      CHAR_UUID,
-                      BLECharacteristic::PROPERTY_WRITE |
-                      BLECharacteristic::PROPERTY_NOTIFY);
-  pCharacteristic->setCallbacks(new JsonCallback());
-  pService->start();
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(SERVICE_UUID);
-  pAdvertising->setScanResponse(false);
-  pAdvertising->setMinPreferred(0x06);  // functions that help with iPhone connections issue
-  pAdvertising->setMinPreferred(0x12);
-  BLEDevice::startAdvertising();
-  Serial.println("Waiting a client connection to notify...");
+    Serial.begin(115200);
+    Serial.println("[SETUP] Starting ESP32 BLE JSON Transfer Server");
+    
+    // Initialize BLE
+    BLEDevice::init("BLETT");
+    Serial.println("[BLE] BLE device initialized");
+    
+    // Create BLE server
+    pServer = BLEDevice::createServer();
+    Serial.println("[BLE] BLE server created");
+    
+    // Create chunked protocol (handles ALL BLE setup internally!)
+    protocol = new ChunkedBLEProtocol(pServer);
+    
+    // Set up callbacks
+    protocol->setDataReceivedCallback(onDataReceived);
+    protocol->setConnectionCallback(onConnectionChanged);
+    protocol->setProgressCallback(onProgress);
+    
+    Serial.println("[SETUP] ChunkedBLEProtocol initialized with callbacks");
+    Serial.println("[SETUP] Server ready for connections!");
 }
 
 void loop() {
-  if (!lastJson.empty() && millis() - lastWrite > 5000) {
-    Serial.println("Sending JSON back...");
-    pCharacteristic->setValue(lastJson);
-    pCharacteristic->notify();
-    lastJson.clear();
-  }
-  delay(100);
+    // Protocol handles everything automatically via callbacks!
+    // No manual polling or state management needed
+    delay(1000);
 }
