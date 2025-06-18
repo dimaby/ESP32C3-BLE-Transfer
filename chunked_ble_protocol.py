@@ -471,8 +471,14 @@ class ChunkedBLEProtocol:
             True if sent successfully, False otherwise
         """
         try:
-            if not self._control_characteristic:
-                self._log("[ERROR] Control characteristic not initialized")
+            if (
+                not self._control_characteristic
+                or not self.client
+                or not self.client.is_connected
+                or not self._control_notifications_enabled
+            ):
+                # Connection already cleaned up - ignore
+                self._log("[WARN] Cannot send ACK, client not connected")
                 return False
             
             # Create ACK message: ack_type(1) + chunk_number(4) + total_chunks(4) + global_crc32(4)
