@@ -1,5 +1,5 @@
 .pio/
 .vscode/
 __pycache__/
-.myenv/
+myenv/
 examples/

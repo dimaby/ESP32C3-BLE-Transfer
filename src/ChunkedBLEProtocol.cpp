@@ -630,6 +630,8 @@ void ChunkedBLEProtocol::clearReceiveBuffers() {
     expectedTotalChunks = 0;
     isReceivingTransfer = false;
     expectedGlobalCRC32 = 0;
+
+
 }
 
 // Additional required method implementations
