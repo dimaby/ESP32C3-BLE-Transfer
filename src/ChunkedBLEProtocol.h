@@ -9,19 +9,32 @@
 #include <vector>
 #include <string>
 #include <functional>
+#include <map>
 
-/**
- * ChunkedBLEProtocol - Simplified BLE Chunked Data Transfer Protocol
- * 
- * Ultra-simple integration: just pass BLE server to constructor and set callbacks
- * 
- * Usage:
- *   BLEServer* server = BLEDevice::createServer();
- *   ChunkedBLEProtocol protocol(server);
- *   protocol.setDataReceivedCallback([](const std::string& data) { ... });
- *   protocol.setProgressCallback([](int current, int total) { ... });
- *   protocol.sendData("your data");
- */
+// ACK Protocol Commands
+#define ACK_CHUNK_RECEIVED    0x01  // Chunk received successfully
+#define ACK_CHUNK_ERROR       0x02  // Chunk error, request retransmission
+#define ACK_TRANSFER_COMPLETE 0x03  // All chunks received, transfer complete
+#define ACK_TRANSFER_SUCCESS  0x04  // Final transfer validation successful
+#define ACK_TRANSFER_FAILED   0x05  // Final transfer validation failed
+
+// Transfer states
+enum TransferState {
+    TRANSFER_IDLE = 0,
+    TRANSFER_RECEIVING,
+    TRANSFER_WAITING_ACK,
+    TRANSFER_COMPLETE,
+    TRANSFER_ERROR
+};
+
+// ACK message structure
+struct AckMessage {
+    uint8_t ack_type;           // ACK command type
+    uint32_t chunk_number;      // Chunk number being acknowledged
+    uint32_t total_chunks;      // Total number of chunks expected
+    uint32_t global_crc32;      // Global CRC32 for final validation
+} __attribute__((packed));
+
 class ChunkedBLEProtocol {
 public:
     // Callback types
@@ -30,18 +43,20 @@ public:
     typedef std::function<void(int currentChunk, int totalChunks, bool isReceiving)> ProgressCallback;
     
     // Constants - Enhanced with dual CRC32 validation  
-    static const size_t HEADER_SIZE = 13;  // chunk_num(2) + total_chunks(2) + data_size(1) + chunk_crc32(4) + global_crc32(4)
-    static const size_t CHUNK_SIZE = 172;  // MTU(185) - HEADER_SIZE(13)
+    static const size_t HEADER_SIZE = 17;  // chunk_num(2) + total_chunks(2) + data_size(1) + chunk_crc32(4) + global_crc32(4) + total_data_size(4)
+    static const size_t CHUNK_SIZE = 168;  // MTU(185) - HEADER_SIZE(17)
     static const size_t MTU_SIZE = 185;
     
     // Security and reliability limits
     static const size_t MAX_TOTAL_DATA_SIZE = 64 * 1024;    // 64KB max transfer
     static const size_t MAX_CHUNKS_PER_TRANSFER = 372;      // ~64KB / 172 bytes
     static const uint32_t DEFAULT_CHUNK_TIMEOUT_MS = 5000;  // Default 5 seconds per chunk timeout
+    static const uint32_t ACK_TIMEOUT_MS = 2000;            // 2 seconds ACK timeout
     
     // Default UUIDs (can be customized via constructor)
     static const char* DEFAULT_SERVICE_UUID;
     static const char* DEFAULT_CHAR_UUID;
+    static const char* DEFAULT_CONTROL_CHAR_UUID;
     
     // Enhanced chunk header structure with dual CRC32 validation
     struct ChunkHeader {
@@ -50,6 +65,7 @@ public:
         uint8_t data_size;       // Size of data in this chunk
         uint32_t chunk_crc32;    // CRC32 of chunk data
         uint32_t global_crc32;   // CRC32 of entire file (same in all chunks)
+        uint32_t total_data_size; // Total size of entire data being transferred
     } __attribute__((packed));
     
     // Transfer statistics and diagnostics
@@ -65,37 +81,54 @@ public:
 
 private:
     // Forward declarations for internal callback classes
-    class ProtocolCharacteristicCallbacks;
-    class ProtocolServerCallbacks;
+    class DataCharacteristicCallbacks;
+    class ControlCharacteristicCallbacks;
+    class ServerCallbacks;
     
-    // BLE components
+    // Core BLE components
     BLEServer* bleServer;
     BLEService* bleService;
-    BLECharacteristic* bleCharacteristic;
+    BLECharacteristic* dataCharacteristic;
+    BLECharacteristic* controlCharacteristic;
     
-    // Internal callback instances
-    ProtocolCharacteristicCallbacks* charCallbacks;
-    ProtocolServerCallbacks* serverCallbacks;
-    
-    // User callbacks
+    // Callback instances
     DataReceivedCallback dataReceivedCallback;
     ConnectionCallback connectionCallback;
     ProgressCallback progressCallback;
     
-    // Protocol state
-    bool isConnected;
-    std::string receiveBuffer;
-    std::vector<std::string> receivedChunks;
-    int expectedChunks;
-    int receivedChunkCount;
+    // Transfer state
+    TransferState currentState;
+    std::vector<std::vector<uint8_t>> chunkBuffers;  // Store received chunks
+    std::vector<bool> chunksReceived;  // Track which chunks are received
+    uint8_t* receivedData;           // Final assembled data
+    size_t totalDataSize;
+    size_t receivedDataSize;
+    uint16_t expectedTotalChunks;
+    bool isReceivingTransfer;
+    bool deviceConnected;
     
-    // Enhanced state management with timeouts and CRC
+    // Transfer statistics
     TransferStats stats;
-    uint32_t lastChunkTime;
-    bool transferInProgress;
-    uint32_t crc32_table[256];  // CRC32 lookup table
+    
+    // CRC32 calculation table (computed once at startup)
+    uint32_t crc32Table[256];
+    bool crc32TableInit;
+    
+    // Timeout management  
+    unsigned long lastChunkTime;
     uint32_t chunkTimeoutMs;    // Configurable chunk timeout
     uint32_t expectedGlobalCRC32;  // Expected global CRC32 from first chunk
+    
+    // ACK management
+    bool waitingForAck;
+    uint32_t lastAckChunk;
+    unsigned long ackTimeout;
+    
+    // ACK-based sending state
+    bool sendingInProgress;
+    std::string currentSendingData;
+    int currentSendingChunks;
+    uint32_t currentSendingGlobalCRC;
     
     // Private methods
     void setupBLEService(const char* serviceUUID, const char* charUUID);
@@ -111,6 +144,22 @@ private:
     void cancelTransfer(const char* reason);
     bool validateChunkHeader(const ChunkHeader& header);
     void updateStatistics(bool success, size_t dataSize);
+    
+    // ACK protocol methods
+    void sendAckMessage(uint8_t ack_type, uint32_t chunk_number = 0);
+    void processControlMessage(const uint8_t* data, size_t length);
+    void handleChunkReceived(uint32_t chunk_number, bool is_valid);
+    void handleTransferComplete();
+    void resetTransfer();
+    bool validateChunk(const uint8_t* chunk_data, size_t data_size, uint32_t expected_crc32);
+    void assembleCompleteData();
+    void log(const char* format, ...);
+    
+    // Missing method declarations
+    size_t calculateActualDataSize();
+    bool initializeTransfer(const ChunkHeader& header);
+    void onDataReceived(BLECharacteristic* characteristic, const uint8_t* data, size_t length);
+    bool sendNextChunk();  // ACK-based chunk sending
     
 public:
     /**
@@ -201,8 +250,9 @@ public:
      * Process received chunk (called internally)
      * 
      * @param data Raw chunk data
+     * @param length Data length
      */
-    void processReceivedChunk(const std::string& data);
+    void processReceivedChunk(const uint8_t* data, size_t length);
     
     /**
      * Handle connection changes (called internally)
@@ -212,17 +262,9 @@ public:
     void handleConnectionChange(bool connected);
     
     /**
-     * Log message (internal utility)
+     * Set chunk timeout (in milliseconds)
      * 
-     * @param format Printf-style format string
-     * @param ... Variable arguments
-     */
-    void log(const char* format, ...);
-    
-    /**
-     * Set chunk timeout in milliseconds
-     * 
-     * @param timeoutMs Chunk timeout in milliseconds
+     * @param timeoutMs Timeout in milliseconds
      */
     void setChunkTimeout(uint32_t timeoutMs);
 };

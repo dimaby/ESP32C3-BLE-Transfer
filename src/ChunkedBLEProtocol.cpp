@@ -3,19 +3,20 @@
 // Default UUIDs
 const char* ChunkedBLEProtocol::DEFAULT_SERVICE_UUID = "5b18eb9b-747f-47da-b7b0-a4e503f9a00f";
 const char* ChunkedBLEProtocol::DEFAULT_CHAR_UUID = "8f8b49a2-9117-4e9f-acfc-fda4d0db7408";
+const char* ChunkedBLEProtocol::DEFAULT_CONTROL_CHAR_UUID = "12345678-1234-1234-1234-123456789012";
 
 // Internal callback class for characteristic events
-class ChunkedBLEProtocol::ProtocolCharacteristicCallbacks : public BLECharacteristicCallbacks {
+class ChunkedBLEProtocol::DataCharacteristicCallbacks : public BLECharacteristicCallbacks {
 private:
     ChunkedBLEProtocol* protocol;
     
 public:
-    explicit ProtocolCharacteristicCallbacks(ChunkedBLEProtocol* p) : protocol(p) {}
+    explicit DataCharacteristicCallbacks(ChunkedBLEProtocol* p) : protocol(p) {}
     
     void onWrite(BLECharacteristic *pChar) override {
         std::string value = pChar->getValue();
         if (value.length() >= protocol->HEADER_SIZE) {
-            protocol->processReceivedChunk(value);
+            protocol->processReceivedChunk((const uint8_t*)value.c_str(), value.length());
         } else {
             protocol->log("[CHUNK] Received data too small for chunk header");
         }
@@ -34,13 +35,39 @@ public:
     }
 };
 
-// Internal callback class for server events
-class ChunkedBLEProtocol::ProtocolServerCallbacks : public BLEServerCallbacks {
+// Internal callback class for control characteristic events
+class ChunkedBLEProtocol::ControlCharacteristicCallbacks : public BLECharacteristicCallbacks {
 private:
     ChunkedBLEProtocol* protocol;
     
 public:
-    explicit ProtocolServerCallbacks(ChunkedBLEProtocol* p) : protocol(p) {}
+    explicit ControlCharacteristicCallbacks(ChunkedBLEProtocol* p) : protocol(p) {}
+    
+    void onWrite(BLECharacteristic *pChar) override {
+        std::string value = pChar->getValue();
+        protocol->processControlMessage((const uint8_t*)value.c_str(), value.length());
+    }
+    
+    void onRead(BLECharacteristic *pChar) override {
+        protocol->log("[BLE] Control characteristic read by client");
+    }
+    
+    void onNotify(BLECharacteristic *pChar) override {
+        protocol->log("[BLE] Control notification sent to client");
+    }
+    
+    void onStatus(BLECharacteristic *pChar, Status s, uint32_t code) override {
+        protocol->log("[BLE] Control status callback - Status: %d, Code: %u", s, code);
+    }
+};
+
+// Internal callback class for server events
+class ChunkedBLEProtocol::ServerCallbacks : public BLEServerCallbacks {
+private:
+    ChunkedBLEProtocol* protocol;
+    
+public:
+    explicit ServerCallbacks(ChunkedBLEProtocol* p) : protocol(p) {}
     
     void onConnect(BLEServer* pServer) override {
         protocol->log("[BLE] Client connected");
@@ -58,69 +85,74 @@ public:
 
 // Constructor with default UUIDs
 ChunkedBLEProtocol::ChunkedBLEProtocol(BLEServer* server) 
-    : bleServer(server), bleService(nullptr), bleCharacteristic(nullptr),
-      charCallbacks(nullptr), serverCallbacks(nullptr),
-      isConnected(false), expectedChunks(0), receivedChunkCount(0),
-      lastChunkTime(0), transferInProgress(false), chunkTimeoutMs(DEFAULT_CHUNK_TIMEOUT_MS),
-      expectedGlobalCRC32(0) {
-    
-    log("[PROTOCOL] Initializing ChunkedBLEProtocol with enhanced security");
-    
-    // Initialize CRC32 lookup table
-    initCRC32Table();
-    
-    // Reset statistics
-    resetStatistics();
-    
-    setupBLEService(DEFAULT_SERVICE_UUID, DEFAULT_CHAR_UUID);
-    log("[PROTOCOL] ChunkedBLEProtocol initialized with CRC validation and timeouts");
+    : ChunkedBLEProtocol(server, DEFAULT_SERVICE_UUID, DEFAULT_CHAR_UUID) {
 }
 
-// Main constructor with custom UUIDs
-ChunkedBLEProtocol::ChunkedBLEProtocol(BLEServer* server, const char* serviceUUID, const char* charUUID) 
-    : bleServer(server), bleService(nullptr), bleCharacteristic(nullptr),
-      charCallbacks(nullptr), serverCallbacks(nullptr),
-      isConnected(false), expectedChunks(0), receivedChunkCount(0),
-      lastChunkTime(0), transferInProgress(false), chunkTimeoutMs(DEFAULT_CHUNK_TIMEOUT_MS),
-      expectedGlobalCRC32(0) {
+// Constructor with custom UUIDs  
+ChunkedBLEProtocol::ChunkedBLEProtocol(BLEServer* server, const char* serviceUUID, const char* charUUID)
+    : bleServer(server), 
+      bleService(nullptr), 
+      dataCharacteristic(nullptr),
+      controlCharacteristic(nullptr),
+      currentState(TRANSFER_IDLE),
+      receivedData(nullptr),
+      totalDataSize(0),
+      receivedDataSize(0),
+      expectedTotalChunks(0),
+      isReceivingTransfer(false),
+      deviceConnected(false),
+      crc32TableInit(false),
+      lastChunkTime(0),
+      chunkTimeoutMs(DEFAULT_CHUNK_TIMEOUT_MS),
+      expectedGlobalCRC32(0),
+      waitingForAck(false),
+      lastAckChunk(0),
+      ackTimeout(0),
+      sendingInProgress(false),
+      currentSendingChunks(0),
+      currentSendingGlobalCRC(0) {
     
-    log("[PROTOCOL] Initializing ChunkedBLEProtocol with custom UUIDs and enhanced security");
+    log("[PROTOCOL] Initializing ChunkedBLEProtocol...");
     
-    // Initialize CRC32 lookup table
+    // Initialize CRC32 table
     initCRC32Table();
     
-    // Reset statistics
-    resetStatistics();
-    
+    // Setup BLE service
     setupBLEService(serviceUUID, charUUID);
-    log("[PROTOCOL] ChunkedBLEProtocol initialized with CRC validation and timeouts");
+    
+    log("[PROTOCOL] ChunkedBLEProtocol initialized successfully");
 }
 
 // Initialize CRC32 lookup table
 void ChunkedBLEProtocol::initCRC32Table() {
-    const uint32_t polynomial = 0xEDB88320;
+    if (crc32TableInit) return;
     
     for (uint32_t i = 0; i < 256; i++) {
         uint32_t crc = i;
-        for (uint32_t j = 8; j > 0; j--) {
+        for (uint32_t j = 0; j < 8; j++) {
             if (crc & 1) {
-                crc = (crc >> 1) ^ polynomial;
+                crc = (crc >> 1) ^ 0xEDB88320;
             } else {
                 crc >>= 1;
             }
         }
-        crc32_table[i] = crc;
+        crc32Table[i] = crc;
     }
-    log("[CRC] CRC32 lookup table initialized");
+    crc32TableInit = true;
+    log("[CRC] CRC32 table initialized");
 }
 
-// Calculate CRC32 for data
+// Calculate CRC32 checksum
 uint32_t ChunkedBLEProtocol::calculateCRC32(const uint8_t* data, size_t length) {
+    if (!crc32TableInit) {
+        initCRC32Table();
+    }
+    
     uint32_t crc = 0xFFFFFFFF;
     
     for (size_t i = 0; i < length; i++) {
         uint8_t tableIndex = (crc ^ data[i]) & 0xFF;
-        crc = (crc >> 8) ^ crc32_table[tableIndex];
+        crc = (crc >> 8) ^ crc32Table[tableIndex];
     }
     
     return crc ^ 0xFFFFFFFF;
@@ -129,12 +161,7 @@ uint32_t ChunkedBLEProtocol::calculateCRC32(const uint8_t* data, size_t length) 
 // Destructor
 ChunkedBLEProtocol::~ChunkedBLEProtocol() {
     log("[PROTOCOL] Cleaning up ChunkedBLEProtocol...");
-    
-    // Clean up callback instances
-    delete charCallbacks;
-    delete serverCallbacks;
-    
-    // Note: BLE service and characteristic are managed by BLE stack
+    clearReceiveBuffers();
     log("[PROTOCOL] ChunkedBLEProtocol cleaned up");
 }
 
@@ -144,27 +171,40 @@ void ChunkedBLEProtocol::setupBLEService(const char* serviceUUID, const char* ch
     bleService = bleServer->createService(serviceUUID);
     log("[BLE] Service created: %s", serviceUUID);
     
-    // Create characteristic with all necessary properties
-    bleCharacteristic = bleService->createCharacteristic(
+    // Create data characteristic with all necessary properties
+    dataCharacteristic = bleService->createCharacteristic(
         charUUID,
         BLECharacteristic::PROPERTY_READ |
         BLECharacteristic::PROPERTY_WRITE |
         BLECharacteristic::PROPERTY_NOTIFY
     );
-    log("[BLE] Characteristic created: %s", charUUID);
+    log("[BLE] Data characteristic created: %s", charUUID);
+    
+    // Create control characteristic for ACK messages
+    controlCharacteristic = bleService->createCharacteristic(
+        DEFAULT_CONTROL_CHAR_UUID,
+        BLECharacteristic::PROPERTY_READ |
+        BLECharacteristic::PROPERTY_WRITE |
+        BLECharacteristic::PROPERTY_NOTIFY
+    );
+    log("[BLE] Control characteristic created: %s", DEFAULT_CONTROL_CHAR_UUID);
     
     // Add Client Characteristic Configuration Descriptor (CCCD) for notifications
     BLE2902* pCCCD = new BLE2902();
     pCCCD->setNotifications(true);
-    bleCharacteristic->addDescriptor(pCCCD);
-    log("[BLE] CCCD descriptor added for notifications");
+    dataCharacteristic->addDescriptor(pCCCD);
+    log("[BLE] CCCD descriptor added for data notifications");
+    
+    // Add CCCD descriptor for control characteristic
+    BLE2902* pControlCCCD = new BLE2902();
+    pControlCCCD->setNotifications(true);
+    controlCharacteristic->addDescriptor(pControlCCCD);
+    log("[BLE] CCCD descriptor added for control notifications");
     
     // Set up callbacks
-    charCallbacks = new ProtocolCharacteristicCallbacks(this);
-    bleCharacteristic->setCallbacks(charCallbacks);
-    
-    serverCallbacks = new ProtocolServerCallbacks(this);
-    bleServer->setCallbacks(serverCallbacks);
+    dataCharacteristic->setCallbacks(new DataCharacteristicCallbacks(this));
+    controlCharacteristic->setCallbacks(new ControlCharacteristicCallbacks(this));
+    bleServer->setCallbacks(new ServerCallbacks(this));
     
     // Start the service
     bleService->start();
@@ -199,7 +239,7 @@ void ChunkedBLEProtocol::setProgressCallback(ProgressCallback callback) {
 
 // Send data using chunked protocol
 bool ChunkedBLEProtocol::sendData(const std::string& data) {
-    if (!isConnected) {
+    if (!deviceConnected) {
         log("[CHUNK] Cannot send data - device not connected");
         return false;
     }
@@ -219,369 +259,503 @@ bool ChunkedBLEProtocol::sendData(const std::string& data) {
     
     log("[CHUNK] Sending data in %d chunks, total size: %d bytes", totalChunks, dataSize);
     log("[SECURITY] Data passed validation (max %d bytes, %d chunks)", 
-        MAX_TOTAL_DATA_SIZE, MAX_CHUNKS_PER_TRANSFER);
+        (int)MAX_TOTAL_DATA_SIZE, (int)MAX_CHUNKS_PER_TRANSFER);
     log("[CRC] Global CRC32 for entire file: 0x%08X", globalCRC32);
     
     // Start transfer timing
     uint32_t sendStartTime = millis();
     
-    for (int chunkNum = 0; chunkNum < totalChunks; chunkNum++) {
-        // Calculate chunk data size
-        size_t chunkDataSize = std::min(CHUNK_SIZE, dataSize - (chunkNum * CHUNK_SIZE));
-        
-        // Extract chunk data
-        const uint8_t* chunkData = (const uint8_t*)data.c_str() + (chunkNum * CHUNK_SIZE);
-        
-        // Calculate CRC32 for chunk data
-        uint32_t chunkCRC32 = calculateCRC32(chunkData, chunkDataSize);
-        
-        // Create enhanced chunk header with dual CRC32
-        ChunkHeader header;
-        header.chunk_num = chunkNum + 1;  // 1-based numbering
-        header.total_chunks = totalChunks;
-        header.data_size = chunkDataSize;
-        header.chunk_crc32 = chunkCRC32;
-        header.global_crc32 = globalCRC32;  // Same global CRC32 in all chunks
-        
-        // Create complete chunk: header + data
-        std::string chunk;
-        chunk.append((char*)&header, sizeof(ChunkHeader));
-        chunk.append((char*)chunkData, chunkDataSize);
-        
-        // Send chunk
-        bleCharacteristic->setValue(chunk);
-        bleCharacteristic->notify();
-        
-        log("[CHUNK] Sent chunk %d/%d (%d bytes data, CRC32: 0x%08X)", 
-            chunkNum + 1, totalChunks, chunkDataSize, chunkCRC32);
-        
-        // Update progress
-        notifyProgress(chunkNum + 1, totalChunks, false);
-        
-        // Small delay between chunks to prevent overwhelming receiver
-        delay(10);
+    // Initialize ACK-based transfer state
+    currentSendingData = data;
+    currentSendingChunks = totalChunks;
+    currentSendingGlobalCRC = globalCRC32;
+    sendingInProgress = true;
+    
+    // Send first chunk to start ACK protocol
+    bool success = sendNextChunk();
+    
+    if (!success) {
+        log("[CHUNK] Failed to start ACK transfer");
+        sendingInProgress = false;
+        return false;
     }
     
-    uint32_t sendTime = millis() - sendStartTime;
-    log("[CHUNK] All chunks sent successfully in %d ms", sendTime);
+    // ACK protocol will handle the rest via onControlReceived()
+    log("[CHUNK] ACK transfer started, waiting for acknowledgments...");
+    return true;
+}
+
+// Send next chunk in ACK-based transfer
+bool ChunkedBLEProtocol::sendNextChunk() {
+    if (!sendingInProgress) {
+        log("[CHUNK] Not sending - transfer not in progress");
+        return false;
+    }
     
-    // Update statistics
-    stats.totalDataSent += dataSize;
+    int chunkNum = lastAckChunk + 1;
+    if (chunkNum > currentSendingChunks) {
+        log("[CHUNK] All chunks sent, waiting for final ACK");
+        return true;
+    }
+    
+    // Calculate chunk data size (use 0-based index for offset calculation)
+    size_t chunkOffset = (chunkNum - 1) * CHUNK_SIZE;
+    size_t chunkDataSize = std::min(CHUNK_SIZE, currentSendingData.length() - chunkOffset);
+    
+    // Extract chunk data (use 0-based offset)
+    const uint8_t* chunkData = (const uint8_t*)currentSendingData.c_str() + chunkOffset;
+    
+    // Calculate CRC32 for chunk data
+    uint32_t chunkCRC32 = calculateCRC32(chunkData, chunkDataSize);
+    
+    // Create enhanced chunk header with dual CRC32
+    ChunkHeader header;
+    header.chunk_num = chunkNum;  
+    header.total_chunks = currentSendingChunks;
+    header.data_size = chunkDataSize;
+    header.chunk_crc32 = chunkCRC32;
+    header.global_crc32 = currentSendingGlobalCRC;  
+    
+    // Create complete chunk: header + data
+    std::string chunk;
+    chunk.append((char*)&header, sizeof(ChunkHeader));
+    chunk.append((char*)chunkData, chunkDataSize);
+    
+    // Send chunk
+    dataCharacteristic->setValue(chunk);
+    dataCharacteristic->notify();
+    
+    log("[CHUNK] Sent chunk %d/%d (%d bytes data, CRC32: 0x%08X)", 
+        chunkNum, currentSendingChunks, (int)chunkDataSize, chunkCRC32);
+    
+    // Update progress
+    notifyProgress(chunkNum, currentSendingChunks, false);
+    
+    // Wait for ACK
+    waitingForAck = true;
+    ackTimeout = millis() + ACK_TIMEOUT_MS;
     
     return true;
 }
 
 // Check if device is connected
 bool ChunkedBLEProtocol::isDeviceConnected() const {
-    return isConnected;
+    return deviceConnected;
 }
 
-// Process received chunk
-void ChunkedBLEProtocol::processReceivedChunk(const std::string& data) {
-    // Check minimum data size for header
-    if (data.length() < sizeof(ChunkHeader)) {
-        log("[CHUNK] Received data too small for chunk header (%d bytes)", data.length());
+void ChunkedBLEProtocol::processReceivedChunk(const uint8_t* data, size_t length) {
+    updateChunkTimer();
+    
+    // Validate minimum size
+    if (length < HEADER_SIZE) {
+        log("[ERROR] Chunk too small: %d bytes (minimum: %d)", (int)length, HEADER_SIZE);
+        sendAckMessage(ACK_CHUNK_ERROR, 0);
         return;
     }
     
-    // Parse enhanced chunk header
+    // Parse header
     ChunkHeader header;
-    memcpy(&header, data.c_str(), sizeof(ChunkHeader));
+    memcpy(&header, data, sizeof(ChunkHeader));
     
-    log("[CHUNK] Received chunk %d/%d (%d bytes data, CRC32: 0x%08X)", 
-        header.chunk_num, header.total_chunks, header.data_size, header.chunk_crc32);
+    // Debug: Log all header fields
+    // log("[DEBUG] Header fields: chunk_num=%d, total_chunks=%d, data_size=%d", 
+    //     header.chunk_num, header.total_chunks, header.data_size);
+    // log("[DEBUG] Header CRCs: chunk_crc32=0x%08X, global_crc32=0x%08X, total_data_size=%d", 
+    //     header.chunk_crc32, header.global_crc32, header.total_data_size);
+    // log("[DEBUG] sizeof(ChunkHeader)=%d, HEADER_SIZE=%d", sizeof(ChunkHeader), HEADER_SIZE);
     
-    // Validate chunk header
+    log("[CHUNK] Received chunk %d/%d, size: %d, chunk_crc32: 0x%08X, global_crc32: 0x%08X", 
+        header.chunk_num, header.total_chunks, header.data_size, 
+        header.chunk_crc32, header.global_crc32);
+    
+    // Validate header
     if (!validateChunkHeader(header)) {
-        log("[CHUNK] Invalid chunk header - ignoring");
-        stats.crcErrors++;
+        log("[ERROR] Invalid chunk header for chunk %d", header.chunk_num);
+        sendAckMessage(ACK_CHUNK_ERROR, header.chunk_num);
         return;
     }
     
-    // Check if data size matches header
-    size_t expectedSize = sizeof(ChunkHeader) + header.data_size;
-    if (data.length() != expectedSize) {
-        log("[CHUNK] Data size mismatch: expected %d, got %d", expectedSize, data.length());
-        stats.crcErrors++;
+    // Initialize transfer if first chunk
+    if (!isReceivingTransfer) {
+        if (!initializeTransfer(header)) {
+            log("[ERROR] Failed to initialize transfer");
+            sendAckMessage(ACK_CHUNK_ERROR, header.chunk_num);
+            return;
+        }
+    }
+    
+    // Check if chunk already received (duplicate)
+    if (chunksReceived[header.chunk_num - 1]) {
+        log("[WARNING] Duplicate chunk %d received, sending ACK again", header.chunk_num);
+        sendAckMessage(ACK_CHUNK_RECEIVED, header.chunk_num);
         return;
     }
     
     // Extract chunk data
-    const uint8_t* chunkData = (const uint8_t*)data.c_str() + sizeof(ChunkHeader);
+    const uint8_t* chunk_data = data + HEADER_SIZE;
+    size_t chunk_data_size = length - HEADER_SIZE;
     
-    // Validate CRC32
-    uint32_t calculatedCRC = calculateCRC32(chunkData, header.data_size);
-    if (calculatedCRC != header.chunk_crc32) {
-        log("[CRC] CRC32 mismatch: expected 0x%08X, calculated 0x%08X", 
-            header.chunk_crc32, calculatedCRC);
-        stats.crcErrors++;
+    // Validate data size
+    if (chunk_data_size != header.data_size) {
+        log("[ERROR] Data size mismatch: expected %d, got %d", header.data_size, (int)chunk_data_size);
+        sendAckMessage(ACK_CHUNK_ERROR, header.chunk_num);
         return;
     }
     
-    log("[CRC] CRC32 validation passed for chunk %d", header.chunk_num);
-    
-    // Initialize chunks vector if this is the first chunk
-    if (header.chunk_num == 1) {
-        clearReceiveBuffers();
-        receivedChunks.resize(header.total_chunks);
-        expectedChunks = header.total_chunks;
-        receivedChunkCount = 0;
-        expectedGlobalCRC32 = header.global_crc32;  // Store expected global CRC32
-        
-        // Start chunk timer (no transfer timer needed)
-        updateChunkTimer();
-        transferInProgress = true;
-        
-        log("[CHUNK] Starting new transfer: expecting %d chunks total", header.total_chunks);
-        log("[CRC] Expected global CRC32: 0x%08X", expectedGlobalCRC32);
-        
-        // Validate total expected data size
-        size_t estimatedTotalSize = header.total_chunks * CHUNK_SIZE;
-        if (!validateDataSize(estimatedTotalSize)) {
-            cancelTransfer("Total data size exceeds limits");
-            return;
-        }
-    } else {
-        // Validate global CRC32 consistency across chunks
-        if (header.global_crc32 != expectedGlobalCRC32) {
-            log("[CRC] Global CRC32 inconsistency: expected 0x%08X, got 0x%08X", 
-                expectedGlobalCRC32, header.global_crc32);
-            cancelTransfer("Global CRC32 mismatch between chunks");
-            return;
-        }
-    }
-    
-    // Check chunk timeout (only timeout check needed)
-    if (checkChunkTimeout()) {
-        cancelTransfer("Chunk timeout");
-        return;
-    }
-    
-    // Update chunk timer
-    updateChunkTimer();
-    
-    // Validate chunk consistency
-    if (header.total_chunks != expectedChunks) {
-        log("[CHUNK] Inconsistent total chunks: expected %d, got %d", 
-            expectedChunks, header.total_chunks);
-        cancelTransfer("Inconsistent chunk count");
-        return;
-    }
-    
-    // Check for duplicate chunks
-    int chunkIndex = header.chunk_num - 1; // Convert to 0-based index
-    if (chunkIndex >= 0 && chunkIndex < receivedChunks.size() && 
-        !receivedChunks[chunkIndex].empty()) {
-        log("[CHUNK] Duplicate chunk %d - ignoring", header.chunk_num);
+    // Validate chunk CRC32
+    uint32_t calculated_crc = calculateCRC32(chunk_data, chunk_data_size);
+    if (calculated_crc != header.chunk_crc32) {
+        log("[ERROR] Chunk CRC32 mismatch: expected 0x%08X, got 0x%08X", 
+            header.chunk_crc32, calculated_crc);
+        sendAckMessage(ACK_CHUNK_ERROR, header.chunk_num);
         return;
     }
     
     // Store chunk data
-    std::string chunkDataStr((char*)chunkData, header.data_size);
-    receivedChunks[chunkIndex] = chunkDataStr;
-    receivedChunkCount++;
-    
-    // Update statistics
-    updateStatistics(true, header.data_size);
-    
-    // Notify progress
-    notifyProgress(receivedChunkCount, expectedChunks, true);
-    
-    log("[CHUNK] Progress: %d/%d chunks received", receivedChunkCount, expectedChunks);
-    
-    // Check if all chunks received
-    if (receivedChunkCount == expectedChunks) {
-        log("[CHUNK] All chunks received, assembling complete data");
+    size_t offset = (header.chunk_num - 1) * CHUNK_SIZE;
+    if (offset + chunk_data_size <= totalDataSize) {
+        memcpy(receivedData + offset, chunk_data, chunk_data_size);
+        chunksReceived[header.chunk_num - 1] = true;
+        receivedDataSize += chunk_data_size;
         
-        // Assemble complete data
-        receiveBuffer.clear();
-        for (int i = 0; i < expectedChunks; i++) {
-            receiveBuffer += receivedChunks[i];
+        log("[SUCCESS] Stored chunk %d/%d (%d bytes, offset: %d)", 
+            header.chunk_num, expectedTotalChunks, (int)chunk_data_size, (int)offset);
+        
+        // Send ACK for successful chunk reception
+        sendAckMessage(ACK_CHUNK_RECEIVED, header.chunk_num);
+        
+        // Update progress callback
+        notifyProgress(header.chunk_num, expectedTotalChunks, true);
+        
+        // Check if all chunks received
+        if (receivedDataSize >= totalDataSize || header.chunk_num >= expectedTotalChunks) {
+            handleTransferComplete();
         }
         
-        // Validate global CRC32 after assembling complete data
-        uint32_t calculatedGlobalCRC32 = calculateCRC32((const uint8_t*)receiveBuffer.c_str(), receiveBuffer.length());
-        if (calculatedGlobalCRC32 != expectedGlobalCRC32) {
-            log("[CRC] Global CRC32 mismatch: expected 0x%08X, calculated 0x%08X", 
-                expectedGlobalCRC32, calculatedGlobalCRC32);
-            cancelTransfer("Global CRC32 mismatch after assembling complete data");
+    } else {
+        log("[ERROR] Chunk offset out of bounds: offset=%d, size=%d, total=%d", 
+            (int)offset, (int)chunk_data_size, (int)totalDataSize);
+        sendAckMessage(ACK_CHUNK_ERROR, header.chunk_num);
+    }
+}
+
+void ChunkedBLEProtocol::handleTransferComplete() {
+    log("[TRANSFER] All chunks received, starting validation");
+    
+    // Send initial completion acknowledgment
+    sendAckMessage(ACK_TRANSFER_COMPLETE, 0);
+    
+    // Calculate actual received data size
+    size_t actualDataSize = calculateActualDataSize();
+    
+    // Validate global CRC32
+    uint32_t calculated_global_crc = calculateCRC32(receivedData, actualDataSize);
+    
+    log("[VALIDATION] Comparing CRC32: expected=0x%08X, calculated=0x%08X", 
+        expectedGlobalCRC32, calculated_global_crc);
+    
+    if (calculated_global_crc == expectedGlobalCRC32) {
+        // Send final success ACK
+        sendAckMessage(ACK_TRANSFER_SUCCESS, 0);
+        
+        // Update progress callback - transfer complete
+        notifyProgress(expectedTotalChunks, expectedTotalChunks, true);
+        
+        // Update statistics
+        updateStatistics(true, actualDataSize);
+        
+        log("[COMPLETE] Transfer completed successfully (%d bytes)", (int)actualDataSize);
+        
+        // NOTE: dataReceivedCallback will be called when client sends final ACK_TRANSFER_COMPLETE
+        // This ensures proper synchronization for bidirectional transfers
+    } else {
+        log("[ERROR] Global CRC32 validation failed");
+        
+        // Send final failure ACK
+        sendAckMessage(ACK_TRANSFER_FAILED, 0);
+        
+        // Update statistics
+        updateStatistics(false, 0);
+        
+        log("[FAILED] Transfer validation failed");
+        
+        // Clean up for failed transfer
+        clearReceiveBuffers();
+    }
+    
+    // NOTE: Do NOT clear buffers here for successful transfers!
+    // Buffers will be cleared after dataReceivedCallback is called in processControlMessage()
+}
+
+size_t ChunkedBLEProtocol::calculateActualDataSize() {
+    // For now, return the received data size
+    // This could be enhanced to calculate based on actual chunk sizes
+    return receivedDataSize;
+}
+
+bool ChunkedBLEProtocol::initializeTransfer(const ChunkHeader& header) {
+    log("[INIT] Initializing transfer: %d chunks, total data size: %d bytes", 
+        header.total_chunks, header.total_data_size);
+    
+    // Validate constraints BEFORE clearing buffers
+    if (header.total_data_size > MAX_TOTAL_DATA_SIZE) {
+        log("[ERROR] Data size too large: %d > %d", (int)header.total_data_size, (int)MAX_TOTAL_DATA_SIZE);
+        return false;
+    }
+    
+    if (header.total_chunks == 0 || header.total_chunks > MAX_CHUNKS_PER_TRANSFER) {
+        log("[ERROR] Invalid chunk count: %d", header.total_chunks);
+        return false;
+    }
+    
+    if (header.total_data_size == 0) {
+        log("[ERROR] Invalid total data size: 0");
+        return false;
+    }
+    
+    // Clear buffers FIRST
+    clearReceiveBuffers();
+    
+    // Set variables AFTER clearing buffers
+    expectedTotalChunks = header.total_chunks;
+    totalDataSize = header.total_data_size;
+    expectedGlobalCRC32 = header.global_crc32;
+    
+    // log("[DEBUG] After assignment: totalDataSize=%d, expectedTotalChunks=%d, expectedGlobalCRC32=0x%08X", 
+    //     (int)totalDataSize, (int)expectedTotalChunks, expectedGlobalCRC32);
+    
+    // log("[DEBUG] About to malloc %d bytes", (int)totalDataSize);
+    
+    receivedData = (uint8_t*)malloc(totalDataSize);
+    if (!receivedData) {
+        log("[ERROR] Failed to allocate %d bytes", (int)totalDataSize);
+        return false;
+    }
+    
+    // log("[DEBUG] Malloc successful: totalDataSize=%d", (int)totalDataSize);
+    
+    // Initialize chunk tracking
+    chunksReceived.clear();
+    chunksReceived.resize(expectedTotalChunks, false);
+    receivedDataSize = 0;
+    
+    isReceivingTransfer = true;
+    updateChunkTimer();
+    
+    log("[INIT] Transfer initialized successfully");
+    return true;
+}
+
+void ChunkedBLEProtocol::onDataReceived(BLECharacteristic* characteristic, const uint8_t* data, size_t length) {
+    if (characteristic == dataCharacteristic) {
+        // Handle data chunks
+        processReceivedChunk(data, length);
+    } else if (characteristic == controlCharacteristic) {
+        // Handle control messages (ACK responses from sender)
+        processControlMessage(data, length);
+    }
+}
+
+void ChunkedBLEProtocol::processControlMessage(const uint8_t* data, size_t length) {
+    if (length < sizeof(AckMessage)) {
+        log("[CONTROL] Invalid ACK message size: %d", (int)length);
+        return;
+    }
+    
+    AckMessage* ackMsg = (AckMessage*)data;
+    
+    log("[CONTROL] Received ACK: type=0x%02X, chunk=%d", ackMsg->ack_type, ackMsg->chunk_number);
+    
+    switch (ackMsg->ack_type) {
+        case ACK_CHUNK_RECEIVED:
+            log("[ACK] Chunk %d acknowledged", ackMsg->chunk_number);
+            break;
+            
+        case ACK_CHUNK_ERROR:
+            log("[ACK] Chunk %d error - retransmission needed", ackMsg->chunk_number);
+            break;
+            
+        case ACK_TRANSFER_COMPLETE:
+            log("[ACK] Transfer complete - client received all data successfully");
+            
+            // Call dataReceivedCallback if transfer was successful and data is available
+            if (dataReceivedCallback && receivedData && expectedTotalChunks > 0) {
+                size_t actualDataSize = calculateActualDataSize();
+                std::string completeData((const char*)receivedData, actualDataSize);
+                log("[CALLBACK] Calling dataReceivedCallback with %d bytes", (int)actualDataSize);
+                dataReceivedCallback(completeData);
+                
+                // Clear buffers after successful callback
+                clearReceiveBuffers();
+                log("[CLEANUP] Buffers cleared after successful transfer");
+            }
+            break;
+            
+        case ACK_TRANSFER_SUCCESS:
+            log("[ACK] Transfer success confirmed");
+            break;
+            
+        case ACK_TRANSFER_FAILED:
+            log("[ACK] Transfer failed confirmed");
+            break;
+            
+        default:
+            log("[ACK] Unknown ACK type: 0x%02X", ackMsg->ack_type);
+            break;
+    }
+    
+    if (sendingInProgress) {
+        // Ignore duplicate ACKs for the same chunk
+        if (ackMsg->chunk_number <= lastAckChunk) {
+            log("[ACK] Ignoring duplicate ACK for chunk %d (last ack: %d)", 
+                ackMsg->chunk_number, lastAckChunk);
             return;
         }
         
-        log("[CRC] Global CRC32 validation passed for complete data");
-        
-        // Mark transfer as complete
-        transferInProgress = false;
-        
-        log("[CHUNK] Complete data assembled (%d bytes)", receiveBuffer.length());
-        
-        // Update final statistics
-        updateStatistics(true, 0); // Final update
-        
-        // Notify callback
-        if (dataReceivedCallback) {
-            dataReceivedCallback(receiveBuffer);
-        }
-        
-        // Clear buffers
-        clearReceiveBuffers();
+        lastAckChunk = ackMsg->chunk_number;
+        waitingForAck = false;
+        sendNextChunk();
     }
 }
 
-// Handle connection changes
-void ChunkedBLEProtocol::handleConnectionChange(bool connected) {
-    isConnected = connected;
-    
-    if (connected) {
-        log("[PROTOCOL] Device connected, ready for chunked data");
-    } else {
-        log("[PROTOCOL] Device disconnected, buffers cleared");
-        clearReceiveBuffers();
-    }
-    
-    // Call user callback
-    if (connectionCallback) {
-        connectionCallback(connected);
-    }
-}
-
-// Clear receive buffers
 void ChunkedBLEProtocol::clearReceiveBuffers() {
-    receivedChunks.clear();
-    receiveBuffer.clear();
-    expectedChunks = 0;
-    receivedChunkCount = 0;
+    if (receivedData) {
+        free(receivedData);
+        receivedData = nullptr;
+    }
+    chunksReceived.clear();
+    chunkBuffers.clear();
+    receivedDataSize = 0;
+    totalDataSize = 0;
+    expectedTotalChunks = 0;
+    isReceivingTransfer = false;
+    expectedGlobalCRC32 = 0;
 }
 
-// Notify progress
+// Additional required method implementations
+
+bool ChunkedBLEProtocol::validateDataSize(size_t size) {
+    return size <= MAX_TOTAL_DATA_SIZE;
+}
+
+bool ChunkedBLEProtocol::checkChunkTimeout() {
+    if (lastChunkTime == 0) return false;
+    return (millis() - lastChunkTime) > chunkTimeoutMs;
+}
+
+void ChunkedBLEProtocol::updateChunkTimer() {
+    lastChunkTime = millis();
+}
+
+void ChunkedBLEProtocol::cancelTransfer(const char* reason) {
+    log("[CANCEL] Transfer cancelled: %s", reason);
+    clearReceiveBuffers();
+}
+
+bool ChunkedBLEProtocol::validateChunkHeader(const ChunkHeader& header) {
+    if (header.chunk_num == 0 || header.chunk_num > header.total_chunks) {
+        return false;
+    }
+    if (header.total_chunks == 0 || header.total_chunks > MAX_CHUNKS_PER_TRANSFER) {
+        return false;
+    }
+    if (header.data_size == 0 || header.data_size > CHUNK_SIZE) {
+        return false;
+    }
+    return true;
+}
+
+void ChunkedBLEProtocol::updateStatistics(bool success, size_t dataSize) {
+    if (success) {
+        stats.totalDataReceived += dataSize;
+        stats.transfersCompleted++;
+    }
+    stats.lastTransferTime = millis();
+}
+
+void ChunkedBLEProtocol::sendAckMessage(uint8_t ack_type, uint32_t chunk_number) {
+    AckMessage ackMsg;
+    ackMsg.ack_type = ack_type;
+    ackMsg.chunk_number = chunk_number;
+    ackMsg.total_chunks = expectedTotalChunks;
+    ackMsg.global_crc32 = expectedGlobalCRC32;
+    
+    controlCharacteristic->setValue((uint8_t*)&ackMsg, sizeof(AckMessage));
+    controlCharacteristic->notify();
+    
+    log("[ACK] Sent ACK: type=0x%02X, chunk=%d", ack_type, chunk_number);
+}
+
+void ChunkedBLEProtocol::handleChunkReceived(uint32_t chunk_number, bool is_valid) {
+    if (is_valid) {
+        sendAckMessage(ACK_CHUNK_RECEIVED, chunk_number);
+    } else {
+        sendAckMessage(ACK_CHUNK_ERROR, chunk_number);
+    }
+}
+
+void ChunkedBLEProtocol::resetTransfer() {
+    clearReceiveBuffers();
+    currentState = TRANSFER_IDLE;
+}
+
+bool ChunkedBLEProtocol::validateChunk(const uint8_t* chunk_data, size_t data_size, uint32_t expected_crc32) {
+    uint32_t calculated_crc = calculateCRC32(chunk_data, data_size);
+    return calculated_crc == expected_crc32;
+}
+
+void ChunkedBLEProtocol::assembleCompleteData() {
+    // Data is already assembled in processReceivedChunk
+    // This method can be used for additional processing if needed
+}
+
+void ChunkedBLEProtocol::log(const char* format, ...) {
+    va_list args;
+    va_start(args, format);
+    char buffer[256];
+    vsnprintf(buffer, sizeof(buffer), format, args);
+    va_end(args);
+    Serial.println(buffer);
+}
+
 void ChunkedBLEProtocol::notifyProgress(int current, int total, bool isReceiving) {
     if (progressCallback) {
         progressCallback(current, total, isReceiving);
     }
 }
 
-// Logging utility
-void ChunkedBLEProtocol::log(const char* format, ...) {
-    char buffer[256];
-    va_list args;
-    va_start(args, format);
-    vsnprintf(buffer, sizeof(buffer), format, args);
-    va_end(args);
-    Serial.println(buffer);
-}
-
-// Validate total data size against limits
-bool ChunkedBLEProtocol::validateDataSize(size_t totalSize) {
-    if (totalSize == 0) {
-        log("[SECURITY] Rejected: Empty data");
-        return false;
+void ChunkedBLEProtocol::handleConnectionChange(bool connected) {
+    deviceConnected = connected;
+    if (connectionCallback) {
+        connectionCallback(connected);
     }
-    
-    if (totalSize > MAX_TOTAL_DATA_SIZE) {
-        log("[SECURITY] Rejected: Data too large (%d bytes, max %d)", 
-            totalSize, MAX_TOTAL_DATA_SIZE);
-        stats.timeouts++; // Count as security violation
-        return false;
-    }
-    
-    size_t requiredChunks = (totalSize + CHUNK_SIZE - 1) / CHUNK_SIZE;
-    if (requiredChunks > MAX_CHUNKS_PER_TRANSFER) {
-        log("[SECURITY] Rejected: Too many chunks required (%d, max %d)", 
-            requiredChunks, MAX_CHUNKS_PER_TRANSFER);
-        stats.timeouts++; // Count as security violation  
-        return false;
-    }
-    
-    return true;
-}
-
-// Check if chunk reception has timed out
-bool ChunkedBLEProtocol::checkChunkTimeout() {
-    if (!transferInProgress) return false;
-    
-    uint32_t currentTime = millis();
-    if (currentTime - lastChunkTime > chunkTimeoutMs) {
-        log("[TIMEOUT] Chunk timeout: %d ms since last chunk", currentTime - lastChunkTime);
-        stats.timeouts++;
-        return true;
-    }
-    return false;
-}
-
-// Update chunk timer
-void ChunkedBLEProtocol::updateChunkTimer() {
-    lastChunkTime = millis();
-}
-
-// Cancel current transfer
-void ChunkedBLEProtocol::cancelTransfer(const char* reason) {
-    if (transferInProgress) {
-        log("[CANCEL] Transfer cancelled: %s", reason);
-        transferInProgress = false;
+    if (!connected) {
         clearReceiveBuffers();
-        stats.timeouts++;
     }
 }
 
-// Validate chunk header
-bool ChunkedBLEProtocol::validateChunkHeader(const ChunkHeader& header) {
-    // Check chunk numbers
-    if (header.chunk_num == 0 || header.total_chunks == 0) {
-        log("[VALIDATE] Invalid chunk numbers: %d/%d", header.chunk_num, header.total_chunks);
-        return false;
-    }
-    
-    if (header.chunk_num > header.total_chunks) {
-        log("[VALIDATE] Chunk number exceeds total: %d > %d", header.chunk_num, header.total_chunks);
-        return false;
-    }
-    
-    if (header.total_chunks > MAX_CHUNKS_PER_TRANSFER) {
-        log("[VALIDATE] Too many chunks: %d > %d", header.total_chunks, MAX_CHUNKS_PER_TRANSFER);
-        return false;
-    }
-    
-    // Check data size
-    if (header.data_size == 0 || header.data_size > CHUNK_SIZE) {
-        log("[VALIDATE] Invalid data size: %d (max %d)", header.data_size, CHUNK_SIZE);
-        return false;
-    }
-    
-    return true;
+void ChunkedBLEProtocol::setChunkTimeout(uint32_t timeoutMs) {
+    chunkTimeoutMs = timeoutMs;
+    log("[CONFIG] Chunk timeout set to %d ms", timeoutMs);
 }
 
-// Update transfer statistics
-void ChunkedBLEProtocol::updateStatistics(bool success, size_t dataSize) {
-    if (success) {
-        stats.totalDataReceived += dataSize;
-        stats.chunksReceived++;
-        if (!transferInProgress) {
-            stats.transfersCompleted++;
-            stats.lastTransferTime = millis(); // Simply use current time instead of transfer duration
-        }
-    }
-}
+// Additional public methods
 
-// Public methods for statistics and transfer management
 ChunkedBLEProtocol::TransferStats ChunkedBLEProtocol::getStatistics() const {
     return stats;
 }
 
 void ChunkedBLEProtocol::resetStatistics() {
-    memset(&stats, 0, sizeof(stats));
+    memset(&stats, 0, sizeof(TransferStats));
     log("[STATS] Statistics reset");
 }
 
 bool ChunkedBLEProtocol::isTransferInProgress() const {
-    return transferInProgress;
+    return isReceivingTransfer;
 }
 
 void ChunkedBLEProtocol::cancelCurrentTransfer(const char* reason) {
-    cancelTransfer(reason);
-}
-
-// Set chunk timeout
-void ChunkedBLEProtocol::setChunkTimeout(uint32_t timeoutMs) {
-    chunkTimeoutMs = timeoutMs;
-    log("[CONFIG] Chunk timeout set to %d ms", chunkTimeoutMs);
+    if (isReceivingTransfer) {
+        cancelTransfer(reason);
+    }
 }

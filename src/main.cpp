@@ -9,10 +9,27 @@ ChunkedBLEProtocol* protocol = nullptr;
 
 // Application callbacks
 void onDataReceived(const std::string& data) {
-    Serial.println("[APP] Complete JSON data received, will respond in 5 seconds");
+    Serial.println("[APP] Complete data received successfully!");
     
-    // Process received JSON data here
-    // For demo, we'll echo it back after a delay
+    // Print received file content to console
+    Serial.printf("[FILE] Received file content (%d bytes):\n", data.length());
+    Serial.println("=== FILE START ===");
+    
+    // Print the content directly without creating string copies (memory optimization)
+    const size_t PRINT_CHUNK_SIZE = 512;
+    size_t dataLen = data.length();
+    const char* dataPtr = data.c_str();
+    
+    for (size_t i = 0; i < dataLen; i += PRINT_CHUNK_SIZE) {
+        size_t chunkSize = std::min(PRINT_CHUNK_SIZE, dataLen - i);
+        // Print directly from original string without copying
+        Serial.write(dataPtr + i, chunkSize);
+    }
+    
+    Serial.println("\n=== FILE END ===");
+    
+    // Process received data here (JSON parsing, etc.)
+    Serial.println("[APP] Processing complete, will respond in 5 seconds");
     
     delay(5000); // Simulate processing time
     
@@ -46,7 +63,7 @@ void setup() {
     Serial.println("[SETUP] Starting ESP32 BLE JSON Transfer Server");
     
     // Initialize BLE
-    BLEDevice::init("BLETT");
+    BLEDevice::init("BLE-Chunked");
     Serial.println("[BLE] BLE device initialized");
     
     // Create BLE server
