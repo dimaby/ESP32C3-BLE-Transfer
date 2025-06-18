@@ -1,4 +1,4 @@
-.pio
-.vscode
-.__pycache__
-.myenv
+.pio/
+.vscode/
+.__pycache__/
+.myenv/
