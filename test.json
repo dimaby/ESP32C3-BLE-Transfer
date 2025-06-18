@@ -1,37 +1,348 @@
 {
-  "lock": {
-    "htop_secret": "08lOBSY4i4qpMEWeZ197QEqXgzN5RL5p",
-    "counter_sync": 0,
-    "disable_hotp_counter": false
+  "project_info": {
+    "name": "ESP32C3 BLE Chunked Transfer Protocol Test",
+    "version": "2.1.0",
+    "description": "Comprehensive test data for BLE chunked transfer protocol with dual CRC32 validation",
+    "author": "ESP32 Development Team",
+    "license": "MIT",
+    "created": "2024-01-15T10:30:00Z",
+    "updated": "2024-06-18T00:30:14Z"
   },
-  "settings": {
-    "disable_sleep_flag": true,
-    "lock_delay_time": 1000,
-    "pin_lock_channel_1": 9,
-    "pin_lock_channel_2": 9,
-    "pin_led": 2,
-    "pin_wakeup": 0,
-    "ble_tx_power_dBm": 21,
-    "relay_type": "uart",
-    "name_device": "SMBP-4IQ6WCLG",
-    "name_device_short": "SMBP",
-    "name_device_long": "SMBP-4IQ6WCLG",
-    "name_device_long_2": "SMBP-4IQ6WCLG",
-    "name_device_long_3": "SMBP-4IQ6WCLG",
-    "name_device_long_4": "SMBP-4IQ6WCLG",
-    "name_device_long_5": "SMBP-4IQ6WCLG",                    
-    "name_device_long_6": "SMBP-4IQ6WCLG",
-    "name_device_long_7": "SMBP-4IQ6WCLG serial_number",
-    "name_device_long_8": "SMBP-4IQ6WCLG disable sleep",
-    "name_device_long_9": "SMBP-4IQ6WCLG disable sleep",
-    "name_device_long_10": "SMBP-4IQ6WCLG disable sleep",         
-    "name_device_long_11": "SMBP-4IQ6WCLG 08lOBSY4i4qpMEWeZ197QEqXgzN5RL5p 08lOBSY4i4qpMEWeZ197QEqXgzN5RL5p"
+  "device_config": {
+    "hardware": {
+      "mcu": "ESP32-C3",
+      "flash_size": "4MB",
+      "ram_size": "400KB",
+      "cpu_frequency": "160MHz",
+      "wifi_enabled": true,
+      "bluetooth_enabled": true,
+      "gpio_pins": [
+        0,
+        1,
+        2,
+        3,
+        4,
+        5,
+        6,
+        7,
+        8,
+        9,
+        10,
+        18,
+        19,
+        20,
+        21
+      ],
+      "adc_pins": [
+        0,
+        1,
+        2,
+        3,
+        4
+      ]
+    },
+    "network": {
+      "wifi_ssid": "TestNetwork_5GHz_WPA3_Enterprise",
+      "wifi_password": "SuperSecurePassword123!@#",
+      "static_ip": "192.168.100.200",
+      "gateway": "192.168.100.1",
+      "dns_primary": "8.8.8.8",
+      "dns_secondary": "1.1.1.1",
+      "hostname": "esp32-ble-server-001",
+      "mdns_enabled": true
+    },
+    "bluetooth": {
+      "device_name": "BLETT_Advanced_Server",
+      "service_uuid": "5b18eb9b-747f-47da-b7b0-a4e503f9a00f",
+      "characteristic_uuid": "8f8b49a2-9117-4e9f-acfc-fda4d0db7408",
+      "tx_power": 21,
+      "advertising_interval": 100,
+      "connection_interval_min": 6,
+      "connection_interval_max": 12,
+      "slave_latency": 0,
+      "supervision_timeout": 400
+    }
   },
-  "dis": {
-    "manufacturer": "Manufacturer 1",
-    "model": "Model 2",
-    "serial_number": "4IQ6WCLG",
-    "hardware_revision": "1.0"
+  "protocol_settings": {
+    "chunked_transfer": {
+      "mtu_size": 185,
+      "header_size": 13,
+      "chunk_data_size": 172,
+      "max_file_size": 65536,
+      "max_chunks_per_transfer": 365,
+      "chunk_timeout_ms": 5000,
+      "enable_crc32_validation": true,
+      "enable_global_crc32": true,
+      "enable_statistics": true,
+      "enable_progress_callbacks": true
+    },
+    "security": {
+      "enable_size_limits": true,
+      "enable_chunk_limits": true,
+      "enable_timeout_protection": true,
+      "max_concurrent_transfers": 1,
+      "enable_dos_protection": true,
+      "rate_limiting_enabled": false
+    }
   },
-  "auth_token": "y9XgaNhvNI4GaDcRaEwzL8VBDgGZkN8a"
+  "test_scenarios": [
+    {
+      "name": "Small JSON Test",
+      "description": "Test with small JSON payload (< 1KB)",
+      "file_size": 500,
+      "expected_chunks": 3,
+      "timeout": 15000,
+      "success_criteria": "All chunks received, CRC32 valid"
+    },
+    {
+      "name": "Medium JSON Test",
+      "description": "Test with medium JSON payload (1-5KB)",
+      "file_size": 3000,
+      "expected_chunks": 18,
+      "timeout": 90000,
+      "success_criteria": "All chunks received, Global CRC32 valid"
+    },
+    {
+      "name": "Large JSON Test",
+      "description": "Test with large JSON payload (10-64KB)",
+      "file_size": 32000,
+      "expected_chunks": 186,
+      "timeout": 300000,
+      "success_criteria": "All chunks received, Dual CRC32 validation passed"
+    },
+    {
+      "name": "Maximum Size Test",
+      "description": "Test with maximum allowed payload (64KB)",
+      "file_size": 65536,
+      "expected_chunks": 365,
+      "timeout": 600000,
+      "success_criteria": "All chunks received within timeout"
+    }
+  ],
+  "sample_data": {
+    "users": [
+      {
+        "id": 1001,
+        "username": "admin_user_001",
+        "email": "admin@esp32-ble-server.local",
+        "full_name": "System Administrator",
+        "role": "administrator",
+        "permissions": [
+          "read",
+          "write",
+          "delete",
+          "config",
+          "monitor"
+        ],
+        "last_login": "2024-06-18T00:15:30Z",
+        "login_count": 247,
+        "preferences": {
+          "theme": "dark",
+          "language": "en-US",
+          "timezone": "UTC+03:00",
+          "notifications": true,
+          "debug_mode": false
+        }
+      },
+      {
+        "id": 1002,
+        "username": "test_user_002",
+        "email": "test@esp32-ble-server.local",
+        "full_name": "Test User Account",
+        "role": "user",
+        "permissions": [
+          "read",
+          "write"
+        ],
+        "last_login": "2024-06-17T18:45:12Z",
+        "login_count": 89,
+        "preferences": {
+          "theme": "light",
+          "language": "ru-RU",
+          "timezone": "UTC+03:00",
+          "notifications": false,
+          "debug_mode": true
+        }
+      },
+      {
+        "id": 1003,
+        "username": "observer_003",
+        "email": "observer@esp32-ble-server.local",
+        "full_name": "Read-Only Observer",
+        "role": "observer",
+        "permissions": [
+          "read"
+        ],
+        "last_login": "2024-06-18T02:30:45Z",
+        "login_count": 12,
+        "preferences": {
+          "theme": "auto",
+          "language": "en-US",
+          "timezone": "UTC+00:00",
+          "notifications": true,
+          "debug_mode": false
+        }
+      }
+    ],
+    "sensors": [
+      {
+        "id": "temp_001",
+        "name": "Temperature Sensor #1",
+        "type": "DS18B20",
+        "pin": 4,
+        "enabled": true,
+        "calibration_offset": -0.5,
+        "min_value": -55.0,
+        "max_value": 125.0,
+        "current_value": 23.7,
+        "last_update": "2024-06-18T00:29:50Z",
+        "readings": [
+          22.1,
+          22.3,
+          22.8,
+          23.0,
+          23.2,
+          23.5,
+          23.7
+        ]
+      },
+      {
+        "id": "humid_001",
+        "name": "Humidity Sensor #1",
+        "type": "DHT22",
+        "pin": 5,
+        "enabled": true,
+        "calibration_offset": 2.0,
+        "min_value": 0.0,
+        "max_value": 100.0,
+        "current_value": 67.3,
+        "last_update": "2024-06-18T00:29:50Z",
+        "readings": [
+          65.1,
+          65.8,
+          66.2,
+          66.7,
+          67.0,
+          67.1,
+          67.3
+        ]
+      },
+      {
+        "id": "pressure_001",
+        "name": "Atmospheric Pressure Sensor",
+        "type": "BMP280",
+        "pin": 21,
+        "enabled": true,
+        "calibration_offset": 0.0,
+        "min_value": 300.0,
+        "max_value": 1100.0,
+        "current_value": 1013.25,
+        "last_update": "2024-06-18T00:29:50Z",
+        "readings": [
+          1012.8,
+          1012.9,
+          1013.0,
+          1013.1,
+          1013.2,
+          1013.2,
+          1013.25
+        ]
+      }
+    ],
+    "actuators": [
+      {
+        "id": "relay_001",
+        "name": "Main Power Relay",
+        "type": "mechanical_relay",
+        "pin": 8,
+        "enabled": true,
+        "state": false,
+        "switch_count": 1547,
+        "last_switch": "2024-06-17T14:22:10Z",
+        "rated_voltage": 12.0,
+        "rated_current": 10.0
+      },
+      {
+        "id": "led_001",
+        "name": "Status LED",
+        "type": "rgb_led",
+        "pins": [
+          2,
+          3,
+          6
+        ],
+        "enabled": true,
+        "current_color": {
+          "r": 0,
+          "g": 255,
+          "b": 0
+        },
+        "brightness": 128,
+        "blink_pattern": "solid",
+        "last_update": "2024-06-18T00:25:15Z"
+      }
+    ]
+  },
+  "system_stats": {
+    "uptime_seconds": 2847691,
+    "free_heap": 245760,
+    "total_heap": 327680,
+    "min_free_heap": 180224,
+    "flash_size": 4194304,
+    "flash_usage": 1245184,
+    "cpu_temperature": 47.2,
+    "wifi_rssi": -45,
+    "ble_connections": 1,
+    "total_ble_connections": 89,
+    "successful_transfers": 156,
+    "failed_transfers": 3,
+    "total_bytes_transferred": 1847592,
+    "average_transfer_time": 8.4,
+    "crc_errors": 2,
+    "timeout_errors": 1
+  },
+  "log_entries": [
+    {
+      "timestamp": "2024-06-18T00:30:10Z",
+      "level": "INFO",
+      "module": "BLE_PROTOCOL",
+      "message": "Client connected successfully, ready for data transfer"
+    },
+    {
+      "timestamp": "2024-06-18T00:30:05Z",
+      "level": "DEBUG",
+      "module": "CRC32_VALIDATOR",
+      "message": "Global CRC32 validation passed: 0x17D12168"
+    },
+    {
+      "timestamp": "2024-06-18T00:29:58Z",
+      "level": "INFO",
+      "module": "CHUNK_HANDLER",
+      "message": "All 7 chunks received and assembled successfully"
+    },
+    {
+      "timestamp": "2024-06-18T00:29:45Z",
+      "level": "DEBUG",
+      "module": "SECURITY",
+      "message": "Data size validation passed: 1087 bytes (limit: 65536)"
+    },
+    {
+      "timestamp": "2024-06-18T00:29:40Z",
+      "level": "INFO",
+      "module": "BLE_SERVER",
+      "message": "BLE advertising started successfully"
+    }
+  ],
+  "configuration": {
+    "debug_enabled": true,
+    "log_level": "DEBUG",
+    "auto_restart": true,
+    "watchdog_timeout": 30000,
+    "memory_check_interval": 10000,
+    "statistics_report_interval": 60000,
+    "backup_config": true,
+    "factory_reset_pin": 0,
+    "status_led_enabled": true,
+    "deep_sleep_enabled": false
+  }
 }
