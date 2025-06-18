@@ -639,12 +639,15 @@ class ChunkedBLEProtocol:
                             # Call data received callback with response data
                             if self._data_received_callback:
                                 self._data_received_callback(complete_data)
-                            
+
                             # Clear response state
                             self._response_chunks = None
                             self._response_chunk_count = 0
-                            self._response_expected_chunks = 0
-                            self._response_expected_global_crc32 = 0
+                            if hasattr(self, '_response_expected_chunks'):
+                                delattr(self, '_response_expected_chunks')
+                            if hasattr(self, '_response_expected_global_crc32'):
+                                delattr(self, '_response_expected_global_crc32')
+                            self._sending_chunks = False
                 return
             else:
                 # Normal chunk reception (not sending)
@@ -759,7 +762,8 @@ class ChunkedBLEProtocol:
             elif ack_type == ACK_TRANSFER_COMPLETE:
                 self._log("[ACK] Transfer complete - ESP32 received all data successfully")
                 self._response_expected_chunks = total_chunks  # Set expected chunks count
-                self._log(f"[DEBUG] Set _response_expected_chunks = {total_chunks}")
+                self._response_expected_global_crc32 = global_crc32
+                self._log(f"[DEBUG] Set _response_expected_chunks = {total_chunks}, _response_expected_global_crc32 = 0x{global_crc32:08X}")
                 # Send ACK_TRANSFER_COMPLETE back to ESP32 to trigger dataReceivedCallback
                 asyncio.create_task(self._send_ack_message(ACK_TRANSFER_COMPLETE, 0))
                 self._stats['successful_transfers'] += 1
