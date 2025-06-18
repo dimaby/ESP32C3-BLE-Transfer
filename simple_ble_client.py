@@ -9,6 +9,7 @@ import json
 import sys
 from bleak import BleakScanner, BleakClient
 from chunked_ble_protocol import ChunkedBLEProtocol, DEFAULT_SERVICE_UUID, DEFAULT_CHAR_UUID
+from refactored_chunked_protocol import RefactoredChunkedBLEProtocol
 
 DEFAULT_DEVICE_NAME = "BLE-Chunked"
 
@@ -28,7 +29,7 @@ class SimpleBLEClient:
         await client.send_json({"test": "data"})
     """
     
-    def __init__(self, device_name: str = DEFAULT_DEVICE_NAME, data_callback=None, progress_callback=None):
+    def __init__(self, device_name: str = DEFAULT_DEVICE_NAME, data_callback=None, progress_callback=None, use_refactored: bool = False):
         """
         Initialize Simple BLE Client
         
@@ -40,6 +41,7 @@ class SimpleBLEClient:
         self.device_name = device_name
         self.data_callback = data_callback
         self.progress_callback = progress_callback
+        self.use_refactored = use_refactored
         
         self.client = None
         self.protocol = None
@@ -95,7 +97,10 @@ class SimpleBLEClient:
             print(f"[BLE] Connected successfully")
             
             # Initialize protocol
-            self.protocol = ChunkedBLEProtocol(self.client)
+            if self.use_refactored:
+                self.protocol = RefactoredChunkedBLEProtocol(self.client)
+            else:
+                self.protocol = ChunkedBLEProtocol(self.client)
             
             # Set callbacks if provided
             if self.data_callback:
