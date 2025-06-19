@@ -57,11 +57,24 @@ private:
     uint16_t num_pkgs_received;
     std::vector<uint8_t> receivedData;
     
+    // Sending state (for ESP32 -> Client data transfer)
+    bool sending;
+    std::vector<std::string> sendChunks;
+    int currentSendChunk;
+    int totalSendChunks;
+    std::string pendingData;
+    
     // Internal methods
     void handleDataMessage();
     void startReceiving();
     void completeReceiving(bool success);
     void writeReceivedData(const uint8_t* data, size_t length);
+    
+    // Internal sending methods
+    void startSending(const std::string& data);
+    void sendNextChunk();
+    void completeSending(bool success);
+    void prepareSendChunks(const std::string& data);
 
 public:
     /**

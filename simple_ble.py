@@ -132,21 +132,23 @@ async def json_exchange(device_name: str, request_data: dict):
             
             # Try to decode as text, fallback to hex if binary
             try:
-                chunk_text = chunk_data.decode('utf-8')
+                # chunk_data is already a string from chunked_ble.py
+                chunk_text = chunk_data  # No need to decode again
                 print(chunk_text, end='')
-            except UnicodeDecodeError:
-                # Print as hex if not valid UTF-8
-                hex_data = ' '.join(f'{b:02x}' for b in chunk_data)
-                print(f"[HEX] {hex_data}")
+            except Exception:
+                # Fallback for any other errors
+                print(f"[ERROR] Cannot display chunk data: {repr(chunk_data)}")
         
         print("\n=== FILE END ===")
         
         # Try to parse as JSON for additional info
         try:
-            json_data = json.loads(data.decode('utf-8'))
-            print(f"[JSON] Parsed JSON data: {json_data}")
-        except:
-            print("[INFO] Data is not valid JSON")
+            json_data = json.loads(data)  # data is already a string
+            print(f"[JSON] Parsed JSON data successfully: {len(str(json_data))} characters")
+        except json.JSONDecodeError as e:
+            print(f"[INFO] Data is not valid JSON: {e}")
+        except Exception as e:
+            print(f"[ERROR] JSON parsing failed: {e}")
         
         response_data = data
     
@@ -172,13 +174,35 @@ async def json_exchange(device_name: str, request_data: dict):
         print("[EXCHANGE] Waiting for response...")
         start_time = asyncio.get_event_loop().time()
         timeout_seconds = 10.0  # Give ESP32 enough time to process (5s delay + 5s buffer)
+        last_chunk_time = start_time
+        chunk_timeout = 2.0  # Timeout between chunks
         
         while response_data is None:
             current_time = asyncio.get_event_loop().time()
             elapsed = current_time - start_time
             
+            # Check if we're receiving chunks and detect end by timeout
+            if protocol.receiving and protocol.received_chunks:
+                time_since_last_chunk = current_time - last_chunk_time
+                if time_since_last_chunk > chunk_timeout:
+                    print(f"[RECEIVE] No new chunks for {time_since_last_chunk:.1f}s, completing reception...")
+                    protocol.complete_receiving_manually()
+                    # Give it a moment to process
+                    await asyncio.sleep(0.5)
+                    break
+                    
+                # Update last chunk time if we got new chunks
+                if hasattr(protocol, '_last_chunk_time'):
+                    last_chunk_time = protocol._last_chunk_time
+            
             if elapsed > timeout_seconds:
-                print(f"[TIMEOUT] No response received after {elapsed:.1f}s, giving up")
+                print(f"[TIMEOUT] No response received after {elapsed:.1f}s")
+                # If we have chunks, try to complete them
+                if protocol.receiving and protocol.received_chunks:
+                    print("[TIMEOUT] Completing partial reception...")
+                    protocol.complete_receiving_manually()
+                    await asyncio.sleep(0.5)
+                    break
                 return None
                 
             await asyncio.sleep(0.1)

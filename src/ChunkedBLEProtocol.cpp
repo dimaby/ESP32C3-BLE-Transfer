@@ -41,7 +41,8 @@ ChunkedBLEProtocol::ChunkedBLEProtocol(BLEServer* server)
 
 // Constructor with custom UUIDs
 ChunkedBLEProtocol::ChunkedBLEProtocol(BLEServer* server, const char* serviceUUID, const char* charUUID) 
-    : bleServer(server), receiving(false), packet_size(0), num_pkgs_received(0) {
+    : bleServer(server), receiving(false), packet_size(0), num_pkgs_received(0),
+      sending(false), currentSendChunk(0), totalSendChunks(0) {
     
     Serial.println("[PROTOCOL] Initializing ChunkedBLE Protocol");
     
@@ -89,6 +90,27 @@ ChunkedBLEProtocol::~ChunkedBLEProtocol() {
 // Handle control messages (based on OTA algorithm)
 void ChunkedBLEProtocol::handleControlMessage() {
     std::string receivedData = controlCharacteristic->getValue();
+    
+    // Check if it's an ACK message from Python client
+    if (receivedData.length() > 4 && receivedData.substr(0, 4) == "ACK_") {
+        // Extract chunk number from ACK_N message
+        std::string chunkStr = receivedData.substr(4);
+        int ackChunkNumber = std::atoi(chunkStr.c_str());
+        
+        Serial.printf("[ACK] Received ACK for chunk %d\n", ackChunkNumber);
+        
+        // If we're sending data, continue with next chunk
+        if (sending && ackChunkNumber == currentSendChunk) {
+            Serial.println("[SEND] ACK received, sending next chunk...");
+            sendNextChunk();
+        } else {
+            Serial.printf("[WARNING] Unexpected ACK: chunk %d, expected %d, sending=%s\n", 
+                         ackChunkNumber, currentSendChunk, sending ? "true" : "false");
+        }
+        return;
+    }
+    
+    // Handle binary control messages
     uint8_t controlValue = receivedData.c_str()[0];
     
     Serial.printf("[CONTROL] Processing control message: 0x%02X\n", controlValue);
@@ -191,17 +213,97 @@ void ChunkedBLEProtocol::processReceivedChunk(const uint8_t* data, size_t length
     writeReceivedData(data, length);
 }
 
-// Send data (stub implementation - ESP32 is primarily a receiver like in OTA)
+// Send data (full implementation - ESP32 to Client data transfer)
 bool ChunkedBLEProtocol::sendData(const std::string& data) {
     Serial.println("[DEBUG] sendData() method called");
     
-    Serial.printf("[SEND] Stub: Would send %d bytes (not implemented yet)\n", data.length());
-    Serial.println("[DEBUG] sendData() method completed");
+    if (sending) {
+        Serial.println("[ERROR] Already sending data, cannot start new transfer");
+        return false;
+    }
     
-    // TODO: Implement sending when needed
-    // For now, just minimal statistics like in OTA
+    if (data.empty()) {
+        Serial.println("[ERROR] Cannot send empty data");
+        return false;
+    }
+    
+    Serial.printf("[SEND] Starting to send %d bytes\n", data.length());
+    
+    // Start sending process
+    startSending(data);
     
     return true;
+}
+
+// Start sending process
+void ChunkedBLEProtocol::startSending(const std::string& data) {
+    sending = true;
+    currentSendChunk = 0;
+    
+    // Calculate chunk size (similar to Python client - use MTU-based size)
+    const size_t CHUNK_SIZE = 512; // Same as Python client
+    totalSendChunks = (data.length() + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    
+    Serial.printf("[SEND] Preparing %d chunks of max %d bytes each\n", totalSendChunks, CHUNK_SIZE);
+    
+    // Prepare all chunks
+    prepareSendChunks(data);
+    
+    // Send first chunk
+    sendNextChunk();
+}
+
+// Prepare send chunks
+void ChunkedBLEProtocol::prepareSendChunks(const std::string& data) {
+    const size_t CHUNK_SIZE = 512;
+    sendChunks.clear();
+    
+    for (size_t i = 0; i < data.length(); i += CHUNK_SIZE) {
+        size_t chunkSize = std::min(CHUNK_SIZE, data.length() - i);
+        std::string chunk = data.substr(i, chunkSize);
+        sendChunks.push_back(chunk);
+    }
+    
+    Serial.printf("[SEND] Prepared %d chunks\n", sendChunks.size());
+}
+
+// Send next chunk
+void ChunkedBLEProtocol::sendNextChunk() {
+    if (currentSendChunk >= totalSendChunks || currentSendChunk >= sendChunks.size()) {
+        // Sending complete
+        completeSending(true);
+        return;
+    }
+    
+    const std::string& chunk = sendChunks[currentSendChunk];
+    
+    Serial.printf("[SEND] Sending chunk %d/%d (%d bytes)\n", 
+                  currentSendChunk + 1, totalSendChunks, chunk.length());
+    
+    // Send chunk over BLE
+    dataCharacteristic->setValue((uint8_t*)chunk.c_str(), chunk.length());
+    dataCharacteristic->notify();
+    
+    currentSendChunk++;
+    
+    // TODO: Wait for ACK before sending next chunk
+    // For now, only send one chunk and stop (no recursive call)
+    Serial.println("[SEND] Chunk sent, waiting for ACK implementation...");
+}
+
+// Complete sending process
+void ChunkedBLEProtocol::completeSending(bool success) {
+    sending = false;
+    currentSendChunk = 0;
+    totalSendChunks = 0;
+    sendChunks.clear();
+    
+    if (success) {
+        Serial.println("[SEND] Data sending completed successfully");
+        stats.transfersCompleted++;
+    } else {
+        Serial.println("[SEND] Data sending failed");
+    }
 }
 
 // Callback setters

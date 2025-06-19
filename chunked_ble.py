@@ -59,6 +59,13 @@ class ChunkedBLEProtocol:
         self.transfer_in_progress = False
         self.response_queue = asyncio.Queue()
         
+        # Receiving state (for incoming data from ESP32)
+        self.receiving = False
+        self.received_chunks = []
+        self.expected_chunks = 0
+        self.current_chunk = 0
+        self._last_chunk_time = None
+        
         # Statistics
         self.stats = {
             'bytes_sent': 0,
@@ -110,15 +117,74 @@ class ChunkedBLEProtocol:
             print(f"[CONTROL] Unknown control message: {data.hex()}")
     
     async def _data_notification_handler(self, sender: int, data: bytearray):
-        """Handle incoming data chunks"""
+        """Handle incoming data chunks from ESP32"""
         print(f"[DATA] Received {len(data)} bytes")
         self.stats['bytes_received'] += len(data)
         self.stats['chunks_received'] += 1
         
-        # For now, just call the callback with received data
-        if self.data_received_callback:
+        # Start receiving mode if not already started
+        if not self.receiving:
+            print("[RECEIVE] Starting to receive data from ESP32")
+            self.receiving = True
+            self.received_chunks = []
+            self.current_chunk = 0
+        
+        # Add chunk to buffer
+        try:
+            import time
             received_data = data.decode('utf-8', errors='ignore')
-            self.data_received_callback(received_data)
+            self.received_chunks.append(received_data)
+            self.current_chunk += 1
+            self._last_chunk_time = time.time()  # Update last chunk time
+            
+            print(f"[RECEIVE] Chunk {self.current_chunk} received ({len(received_data)} bytes) - buffering...")
+            
+            # Send ACK back to ESP32
+            await self._send_chunk_ack(self.current_chunk)
+            
+            # Don't call callback for individual chunks - wait for completion
+            # Completion will be detected by timeout or explicit signal
+                
+        except Exception as e:
+            print(f"[ERROR] Failed to process incoming chunk: {e}")
+    
+    async def _complete_receiving(self):
+        """Complete receiving and process all accumulated data"""
+        if not self.received_chunks:
+            print("[RECEIVE] No data received to complete")
+            return
+            
+        # Combine all chunks into complete data
+        complete_data = "".join(self.received_chunks)
+        total_bytes = len(complete_data)
+        
+        print(f"[RECEIVE] Completed receiving {len(self.received_chunks)} chunks ({total_bytes} bytes)")
+        
+        # Call callback with complete data
+        if self.data_received_callback:
+            self.data_received_callback(complete_data)
+        
+        # Reset receiving state
+        self.reset_receiving()
+    
+    def complete_receiving_manually(self):
+        """Manually trigger completion of receiving (for external use)"""
+        import asyncio
+        if self.receiving and self.received_chunks:
+            asyncio.create_task(self._complete_receiving())
+    
+    async def _send_chunk_ack(self, chunk_number: int):
+        """Send ACK for received chunk back to ESP32"""
+        try:
+            # Send simple ACK via control characteristic
+            ack_message = f"ACK_{chunk_number}".encode('utf-8')
+            await self.client.write_gatt_char(
+                self.control_char_uuid,
+                ack_message
+            )
+            print(f"[ACK] Sent ACK for chunk {chunk_number}")
+        except Exception as e:
+            print(f"[ERROR] Failed to send ACK: {e}")
     
     async def send_data(self, data: str) -> bool:
         """
@@ -274,3 +340,17 @@ class ChunkedBLEProtocol:
             self.transfer_in_progress = False
         else:
             print("[TRANSFER] No transfer in progress to cancel")
+    
+    def get_received_data(self) -> str:
+        """Get all received data as single string"""
+        if not self.received_chunks:
+            return ""
+        return "".join(self.received_chunks)
+    
+    def reset_receiving(self):
+        """Reset receiving state"""
+        self.receiving = False
+        self.received_chunks = []
+        self.current_chunk = 0
+        self._last_chunk_time = None
+        print("[RECEIVE] Receiving state reset")
