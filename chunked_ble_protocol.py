@@ -45,7 +45,7 @@ class ChunkedBLEProtocol:
     # Security and reliability limits
     MAX_TOTAL_DATA_SIZE = 64 * 1024    # 64KB max transfer
     MAX_CHUNKS_PER_TRANSFER = 365      # ~64KB / 172 bytes
-    DEFAULT_CHUNK_TIMEOUT = 5.0        # Default 5 seconds per chunk timeout
+    DEFAULT_CHUNK_TIMEOUT = 60.0        # Default 5 seconds per chunk timeout
 
     def __init__(self, client: BleakClient, service_uuid: str = DEFAULT_SERVICE_UUID, char_uuid: str = DEFAULT_CHAR_UUID):
         """

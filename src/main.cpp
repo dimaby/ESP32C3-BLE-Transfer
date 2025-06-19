@@ -46,7 +46,7 @@ void setup() {
     Serial.println("[SETUP] Starting ESP32 BLE JSON Transfer Server");
     
     // Initialize BLE
-    BLEDevice::init("BLETT");
+    BLEDevice::init("BLE-Chunked");
     Serial.println("[BLE] BLE device initialized");
     
     // Create BLE server
@@ -66,7 +66,5 @@ void setup() {
 }
 
 void loop() {
-    // Protocol handles everything automatically via callbacks!
-    // No manual polling or state management needed
-    delay(1000);
+    
 }

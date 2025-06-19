@@ -17,14 +17,14 @@ class SimpleBLEClient:
     
     Provides ultra-simple API for BLE JSON data exchange.
     Usage:
-        client = SimpleBLEClient("BLETT")
+        client = SimpleBLEClient("BLE-Chunked")
         client.set_data_received_callback(on_data)
         await client.connect()
         await client.send_json({"test": "data"})
         response = await client.receive_json()
     """
     
-    def __init__(self, device_name: str = "BLETT"):
+    def __init__(self, device_name: str = "BLE-Chunked"):
         """
         Initialize Simple BLE Client
         
@@ -270,7 +270,7 @@ async def demo():
         direction = "RX" if is_receiving else "TX"
         print(f"[PROGRESS] {direction}: {current}/{total}")
     
-    client = SimpleBLEClient("BLETT")
+    client = SimpleBLEClient("BLE-Chunked")
     client.set_data_received_callback(on_data_received)
     client.set_progress_callback(on_progress)
     
@@ -293,7 +293,7 @@ async def demo():
     print("\n2. One-liner JSON exchange:")
     
     request = {"test": "ping", "value": 42}
-    response = await simple_json_exchange("BLETT", request, timeout=15.0)
+    response = await simple_json_exchange("BLE-Chunked", request, timeout=15.0)
     
     if response:
         print(f"[DEMO] One-liner response: {response}")
@@ -301,7 +301,7 @@ async def demo():
         print("[DEMO] One-liner exchange failed")
 
 
-async def send_json_file(file_path: str, device_name: str = "BLETT"):
+async def send_json_file(file_path: str, device_name: str = "BLE-Chunked"):
     """
     Send JSON file to BLE device
     
@@ -341,7 +341,7 @@ if __name__ == "__main__":
     if len(sys.argv) > 1:
         # File mode: send JSON file
         json_file = sys.argv[1]
-        device_name = sys.argv[2] if len(sys.argv) > 2 else "BLETT"
+        device_name = sys.argv[2] if len(sys.argv) > 2 else "BLE-Chunked"
         
         print(f"=== Sending JSON file: {json_file} to {device_name} ===")
         

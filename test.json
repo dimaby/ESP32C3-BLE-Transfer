@@ -52,7 +52,7 @@
       "mdns_enabled": true
     },
     "bluetooth": {
-      "device_name": "BLETT_Advanced_Server",
+      "device_name": "BLE-Chunked_Advanced_Server",
       "service_uuid": "5b18eb9b-747f-47da-b7b0-a4e503f9a00f",
       "characteristic_uuid": "8f8b49a2-9117-4e9f-acfc-fda4d0db7408",
       "tx_power": 21,

@@ -259,7 +259,7 @@ bool ChunkedBLEProtocol::sendData(const std::string& data) {
         notifyProgress(chunkNum + 1, totalChunks, false);
         
         // Small delay between chunks to prevent overwhelming receiver
-        delay(10);
+        delay(100);
     }
     
     uint32_t sendTime = millis() - sendStartTime;
