@@ -1,8 +1,7 @@
 #include <Arduino.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
-// #include "ChunkedBLEProtocol.h"
-#include "ChunkedBLEStub.h"
+#include "ChunkedBLEProtocol.h"
 
 // Global objects
 BLEServer* pServer = nullptr;

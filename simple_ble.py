@@ -8,7 +8,7 @@ import asyncio
 import json
 import sys
 from bleak import BleakScanner, BleakClient
-from chunked_ble_stub import ChunkedBLEProtocol
+from chunked_ble import ChunkedBLEProtocol
 
 DEFAULT_DEVICE_NAME = "BLE-Chunked"
 
@@ -101,24 +101,6 @@ async def disconnect_client(client):
         print(f"[ERROR] Disconnect failed: {e}")
 
 
-async def send_json_data(protocol, data: dict) -> bool:
-    """
-    Send JSON data through protocol
-    
-    Args:
-        protocol: Initialized ChunkedBLEProtocol instance
-        data: Dictionary to send as JSON
-        
-    Returns:
-        True if sent successfully, False otherwise
-    """
-    if not protocol:
-        print("[ERROR] Protocol not initialized")
-        return False
-    
-    return await protocol.send_json(data)
-
-
 async def json_exchange(device_name: str, request_data: dict):
     """
     One-liner function for simple JSON request-response exchange
@@ -181,7 +163,7 @@ async def json_exchange(device_name: str, request_data: dict):
             return None
         
         # Send request
-        if not await send_json_data(protocol, request_data):
+        if not await protocol.send_data(json.dumps(request_data, indent=2)):
             return None
         
         # Wait for response (no timeout - wait until data arrives)
@@ -261,5 +243,5 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"[ERROR] {e}")
     else:
-        print("Usage: python simple_ble_functions.py <json_file> [device_name]")
-        print("Example: python simple_ble_functions.py test.json BLE-Chunked")
+        print("Usage: python simple_ble.py <json_file> [device_name]")
+        print("Example: python simple_ble.py test.json BLE-Chunked")
