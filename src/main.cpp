@@ -1,7 +1,8 @@
 #include <Arduino.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
-#include "ChunkedBLEProtocol.h"
+// #include "ChunkedBLEProtocol.h"
+#include "ChunkedBLEStub.h"
 
 // Global objects
 BLEServer* pServer = nullptr;
@@ -78,12 +79,16 @@ void setup() {
     protocol->setConnectionCallback(onConnectionChanged);
     protocol->setProgressCallback(onProgress);
     
+    // Start advertising after protocol initialization
+    BLEDevice::startAdvertising();
+    Serial.println("[BLE] Advertising started");
+    
     Serial.println("[SETUP] ChunkedBLEProtocol initialized with callbacks");
     Serial.println("[SETUP] Server ready for connections!");
 }
 
 void loop() {
-    // Protocol handles everything automatically via callbacks!
+    // Protocol handles everything automatically via callbacks
     // No manual polling or state management needed
     delay(1000);
 }
