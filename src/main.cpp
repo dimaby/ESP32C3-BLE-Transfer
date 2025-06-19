@@ -9,7 +9,7 @@ ChunkedBLEProtocol* protocol = nullptr;
 
 // Application callbacks
 void onDataReceived(const std::string& data) {
-    Serial.println("[APP] Complete data received successfully!");
+    Serial.printf("[APP] Complete data received successfully at %lu ms!\n", millis());
     
     // Print received file content to console
     Serial.printf("[FILE] Received file content (%d bytes):\n", data.length());
@@ -29,22 +29,23 @@ void onDataReceived(const std::string& data) {
     Serial.println("\n=== FILE END ===");
     
     // Process received data here (JSON parsing, etc.)
-    Serial.println("[APP] Processing complete, will respond in 5 seconds");
+    Serial.printf("[APP] Processing complete at %lu ms, will respond in 5 seconds\n", millis());
     
     delay(5000); // Simulate processing time
     
-    Serial.println("[APP] Sending response back to client...");
-    if (protocol && protocol->isDeviceConnected()) {
+    Serial.printf("[APP] Sending response back to client at %lu ms...\n", millis());
+
+    if (protocol) {
         protocol->sendData(data); // Echo back the same data
         Serial.println("[APP] Response sent successfully");
-    }
+    } 
 }
 
 void onConnectionChanged(bool connected) {
     if (connected) {
         Serial.println("[APP] Client connected - ready for data exchange");
     } else {
-        Serial.println("[APP] Client disconnected - clearing pending responses");
+        Serial.printf("[APP] Client disconnected at %lu ms - clearing pending responses\n", millis());
         
         // Restart advertising for next connection
         Serial.println("[APP] Connection lost, restarting advertising");
@@ -57,6 +58,24 @@ void onProgress(int current, int total, bool isReceiving) {
     const char* direction = isReceiving ? "Receiving" : "Sending";
     Serial.printf("[PROGRESS] %s: %d/%d chunks\n", direction, current, total);
 }
+
+// BLE Server callbacks for connection monitoring
+class BLEServerCallbacksWithLogging : public BLEServerCallbacks {
+public:
+    void onConnect(BLEServer* pServer) override {
+        Serial.printf("[BLE] Client connected at %lu ms\n", millis());
+    }
+    
+    void onDisconnect(BLEServer* pServer) override {
+        Serial.printf("[BLE] Client disconnected at %lu ms\n", millis());
+        Serial.println("[BLE] Reason: BLE stack initiated disconnect");
+        
+        // Restart advertising automatically
+        Serial.println("[BLE] Restarting advertising after disconnect...");
+        BLEDevice::startAdvertising();
+        Serial.println("[BLE] Advertising restarted");
+    }
+};
 
 void setup() {
     Serial.begin(115200);
@@ -77,6 +96,9 @@ void setup() {
     protocol->setDataReceivedCallback(onDataReceived);
     protocol->setConnectionCallback(onConnectionChanged);
     protocol->setProgressCallback(onProgress);
+    
+    // Set up BLE server callbacks
+    pServer->setCallbacks(new BLEServerCallbacksWithLogging());
     
     // Start advertising after protocol initialization
     BLEDevice::startAdvertising();

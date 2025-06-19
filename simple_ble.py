@@ -166,10 +166,21 @@ async def json_exchange(device_name: str, request_data: dict):
         if not await protocol.send_data(json.dumps(request_data, indent=2)):
             return None
         
-        # Wait for response (no timeout - wait until data arrives)
+        print("[EXCHANGE] Data sent successfully, waiting for ESP32 to process and respond...")
+        
+        # Wait for response with timeout (ESP32 needs time to process - 5s delay + response time)
         print("[EXCHANGE] Waiting for response...")
         start_time = asyncio.get_event_loop().time()
+        timeout_seconds = 10.0  # Give ESP32 enough time to process (5s delay + 5s buffer)
+        
         while response_data is None:
+            current_time = asyncio.get_event_loop().time()
+            elapsed = current_time - start_time
+            
+            if elapsed > timeout_seconds:
+                print(f"[TIMEOUT] No response received after {elapsed:.1f}s, giving up")
+                return None
+                
             await asyncio.sleep(0.1)
         
         print(f"[EXCHANGE] Response received after {asyncio.get_event_loop().time() - start_time:.1f}s")

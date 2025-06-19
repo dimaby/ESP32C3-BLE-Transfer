@@ -1,6 +1,6 @@
 #include "ChunkedBLEProtocol.h"
 
-// Data characteristic callback class (based on OTA algorithm)
+// Data characteristic callback class
 class DataCharacteristicCallbacks : public BLECharacteristicCallbacks {
 private:
     ChunkedBLEProtocol* protocol;
@@ -17,7 +17,7 @@ public:
     }
 };
 
-// Control characteristic callback class (based on OTA algorithm)
+// Control characteristic callback class
 class ControlCharacteristicCallbacks : public BLECharacteristicCallbacks {
 private:
     ChunkedBLEProtocol* protocol;
@@ -41,7 +41,7 @@ ChunkedBLEProtocol::ChunkedBLEProtocol(BLEServer* server)
 
 // Constructor with custom UUIDs
 ChunkedBLEProtocol::ChunkedBLEProtocol(BLEServer* server, const char* serviceUUID, const char* charUUID) 
-    : bleServer(server), deviceConnected(false), receiving(false), packet_size(0), num_pkgs_received(0) {
+    : bleServer(server), receiving(false), packet_size(0), num_pkgs_received(0) {
     
     Serial.println("[PROTOCOL] Initializing ChunkedBLE Protocol");
     
@@ -193,12 +193,10 @@ void ChunkedBLEProtocol::processReceivedChunk(const uint8_t* data, size_t length
 
 // Send data (stub implementation - ESP32 is primarily a receiver like in OTA)
 bool ChunkedBLEProtocol::sendData(const std::string& data) {
-    if (!deviceConnected) {
-        Serial.println("[ERROR] Cannot send data - device not connected");
-        return false;
-    }
+    Serial.println("[DEBUG] sendData() method called");
     
     Serial.printf("[SEND] Stub: Would send %d bytes (not implemented yet)\n", data.length());
+    Serial.println("[DEBUG] sendData() method completed");
     
     // TODO: Implement sending when needed
     // For now, just minimal statistics like in OTA
@@ -219,26 +217,7 @@ void ChunkedBLEProtocol::setProgressCallback(ProgressCallback callback) {
     progressCallback = callback;
 }
 
-// Connection handling
-void ChunkedBLEProtocol::handleConnectionChange(bool connected) {
-    deviceConnected = connected;
-    if (connectionCallback) {
-        connectionCallback(connected);
-    }
-    
-    if (!connected) {
-        // Reset transfer state on disconnect
-        receiving = false;
-        receivedData.clear();
-        num_pkgs_received = 0;
-    }
-}
-
 // Utility methods
-bool ChunkedBLEProtocol::isDeviceConnected() const {
-    return deviceConnected;
-}
-
 ChunkedBLEProtocol::TransferStats ChunkedBLEProtocol::getStatistics() const {
     return stats;
 }

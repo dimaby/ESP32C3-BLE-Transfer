@@ -10,12 +10,12 @@
 #include <string>
 #include <functional>
 
-// UUIDs (matching Python implementation)
+// UUIDs
 #define DEFAULT_SERVICE_UUID "5b18eb9b-747f-47da-b7b0-a4e503f9a00f"
 #define DEFAULT_CHAR_UUID "8f8b49a2-9117-4e9f-acfc-fda4d0db7408"
 #define DEFAULT_CONTROL_CHAR_UUID "12345678-1234-1234-1234-123456789012"
 
-// Control messages (matching Python implementation and OTA)
+// Control messages
 #define CONTROL_NOP 0x00
 #define CONTROL_REQUEST 0x01
 #define CONTROL_REQUEST_ACK 0x02
@@ -35,7 +35,7 @@ public:
     struct TransferStats {
         uint32_t transfersCompleted = 0;
     };
-
+    
 private:
     // BLE components
     BLEServer* bleServer;
@@ -50,10 +50,7 @@ private:
     
     // Statistics
     TransferStats stats;
-    
-    // Connection state
-    bool deviceConnected;
-    
+     
     // Transfer state (based on OTA algorithm)
     bool receiving;
     uint16_t packet_size;
@@ -124,13 +121,6 @@ public:
     bool sendData(const std::string& data);
     
     /**
-     * Check if device is connected
-     * 
-     * @return true if connected, false otherwise
-     */
-    bool isDeviceConnected() const;
-    
-    /**
      * Get transfer statistics
      * 
      * @return Current transfer statistics
@@ -163,13 +153,6 @@ public:
      * @param length Data length
      */
     void processReceivedChunk(const uint8_t* data, size_t length);
-    
-    /**
-     * Handle connection changes (called internally)
-     * 
-     * @param connected Connection status
-     */
-    void handleConnectionChange(bool connected);
 };
 
 #endif // CHUNKED_BLE_PROTOCOL_H
