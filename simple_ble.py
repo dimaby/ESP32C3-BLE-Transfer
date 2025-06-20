@@ -121,29 +121,12 @@ async def json_exchange(device_name: str, request_data: dict):
         # Print received file content to console
         print(f"[FILE] Received file content ({len(data)} bytes):")
         print("=== FILE START ===")
-        
-        # Print the content in chunks of 512 bytes (like ESP32)
-        PRINT_CHUNK_SIZE = 512
-        data_len = len(data)
-        
-        for i in range(0, data_len, PRINT_CHUNK_SIZE):
-            chunk_size = min(PRINT_CHUNK_SIZE, data_len - i)
-            chunk_data = data[i:i + chunk_size]
-            
-            # Try to decode as text, fallback to hex if binary
-            try:
-                # chunk_data is already a string from chunked_ble.py
-                chunk_text = chunk_data  # No need to decode again
-                print(chunk_text, end='')
-            except Exception:
-                # Fallback for any other errors
-                print(f"[ERROR] Cannot display chunk data: {repr(chunk_data)}")
-        
+        print(data, end='')
         print("\n=== FILE END ===")
         
         # Try to parse as JSON for additional info
         try:
-            json_data = json.loads(data)  # data is already a string
+            json_data = json.loads(data)
             print(f"[JSON] Parsed JSON data successfully: {len(str(json_data))} characters")
         except json.JSONDecodeError as e:
             print(f"[INFO] Data is not valid JSON: {e}")

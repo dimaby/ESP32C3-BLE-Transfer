@@ -1,6 +1,8 @@
 #include <Arduino.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
+#include <BLEUtils.h>
+#include <BLE2902.h>
 #include "ChunkedBLEProtocol.h"
 
 // Global objects
@@ -14,18 +16,7 @@ void onDataReceived(const std::string& data) {
     // Print received file content to console
     Serial.printf("[FILE] Received file content (%d bytes):\n", data.length());
     Serial.println("=== FILE START ===");
-    
-    // Print the content directly without creating string copies (memory optimization)
-    const size_t PRINT_CHUNK_SIZE = 512;
-    size_t dataLen = data.length();
-    const char* dataPtr = data.c_str();
-    
-    for (size_t i = 0; i < dataLen; i += PRINT_CHUNK_SIZE) {
-        size_t chunkSize = std::min(PRINT_CHUNK_SIZE, dataLen - i);
-        // Print directly from original string without copying
-        Serial.write(dataPtr + i, chunkSize);
-    }
-    
+    Serial.print(data.c_str());
     Serial.println("\n=== FILE END ===");
     
     // Process received data here (JSON parsing, etc.)
@@ -59,16 +50,14 @@ void onProgress(int current, int total, bool isReceiving) {
     Serial.printf("[PROGRESS] %s: %d/%d chunks\n", direction, current, total);
 }
 
-// BLE Server callbacks for connection monitoring
-class BLEServerCallbacksWithLogging : public BLEServerCallbacks {
+class MyServerCallbacks : public BLEServerCallbacks {
 public:
-    void onConnect(BLEServer* pServer) override {
-        Serial.printf("[BLE] Client connected at %lu ms\n", millis());
+    void onConnect(BLEServer* s) override {
+        Serial.println("[BLE] Client connected");
     }
     
     void onDisconnect(BLEServer* pServer) override {
-        Serial.printf("[BLE] Client disconnected at %lu ms\n", millis());
-        Serial.println("[BLE] Reason: BLE stack initiated disconnect");
+        Serial.println("[BLE] Client disconnected");
         
         // Restart advertising automatically
         Serial.println("[BLE] Restarting advertising after disconnect...");
@@ -89,6 +78,9 @@ void setup() {
     pServer = BLEDevice::createServer();
     Serial.println("[BLE] BLE server created");
     
+    // Set server callbacks
+    pServer->setCallbacks(new MyServerCallbacks());
+    
     // Create chunked protocol (handles ALL BLE setup internally!)
     protocol = new ChunkedBLEProtocol(pServer);
     
@@ -97,8 +89,9 @@ void setup() {
     protocol->setConnectionCallback(onConnectionChanged);
     protocol->setProgressCallback(onProgress);
     
-    // Set up BLE server callbacks
-    pServer->setCallbacks(new BLEServerCallbacksWithLogging());
+    // Set fixed chunk size
+    protocol->setChunkSize(512);
+    Serial.println("[SETUP] Fixed chunk size set to 512 bytes");
     
     // Start advertising after protocol initialization
     BLEDevice::startAdvertising();
@@ -109,7 +102,5 @@ void setup() {
 }
 
 void loop() {
-    // Protocol handles everything automatically via callbacks
-    // No manual polling or state management needed
-    delay(1000);
+    delay(100);  
 }

@@ -7,12 +7,12 @@ import asyncio
 import datetime
 import struct
 import json
-import zlib  # For CRC32 calculation
+import zlib
 from typing import Callable, Optional, List
 from bleak import BleakClient, BleakScanner
 from bleak.backends.characteristic import BleakGATTCharacteristic
 
-# UUIDs (matching ESP32 implementation)
+# UUIDs
 DEFAULT_SERVICE_UUID = "5b18eb9b-747f-47da-b7b0-a4e503f9a00f"
 DEFAULT_CHAR_UUID = "8f8b49a2-9117-4e9f-acfc-fda4d0db7408"
 DEFAULT_CONTROL_CHAR_UUID = "12345678-1234-1234-1234-123456789012"

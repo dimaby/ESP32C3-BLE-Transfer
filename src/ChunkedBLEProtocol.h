@@ -59,6 +59,7 @@ private:
     
     // Sending state (for ESP32 -> Client data transfer)
     bool sending;
+    uint16_t outgoing_chunk_size;  // Размер чанка для исходящих данных (устанавливается через MTU)
     std::vector<std::string> sendChunks;
     int currentSendChunk;
     int totalSendChunks;
@@ -158,6 +159,13 @@ public:
      * @param reason Reason for cancellation (for logging)
      */
     void cancelCurrentTransfer(const char* reason = "User requested");
+    
+    /**
+     * Set chunk size for outgoing data (called from MTU callback)
+     * 
+     * @param size New chunk size in bytes
+     */
+    void setChunkSize(uint16_t size);
     
     /**
      * Process received chunk (called internally)

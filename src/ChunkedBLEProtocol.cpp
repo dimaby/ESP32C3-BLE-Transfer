@@ -42,7 +42,7 @@ ChunkedBLEProtocol::ChunkedBLEProtocol(BLEServer* server)
 // Constructor with custom UUIDs
 ChunkedBLEProtocol::ChunkedBLEProtocol(BLEServer* server, const char* serviceUUID, const char* charUUID) 
     : bleServer(server), receiving(false), packet_size(0), num_pkgs_received(0),
-      sending(false), currentSendChunk(0), totalSendChunks(0) {
+      sending(false), outgoing_chunk_size(512), currentSendChunk(0), totalSendChunks(0) {
     
     Serial.println("[PROTOCOL] Initializing ChunkedBLE Protocol");
     
@@ -241,10 +241,9 @@ void ChunkedBLEProtocol::startSending(const std::string& data) {
     currentSendChunk = 0;
     
     // Calculate chunk size (similar to Python client - use MTU-based size)
-    const size_t CHUNK_SIZE = 512; // Same as Python client
-    totalSendChunks = (data.length() + CHUNK_SIZE - 1) / CHUNK_SIZE;
+    totalSendChunks = (data.length() + outgoing_chunk_size - 1) / outgoing_chunk_size;
     
-    Serial.printf("[SEND] Preparing %d chunks of max %d bytes each\n", totalSendChunks, CHUNK_SIZE);
+    Serial.printf("[SEND] Preparing %d chunks of max %d bytes each\n", totalSendChunks, outgoing_chunk_size);
     
     // Prepare all chunks
     prepareSendChunks(data);
@@ -255,11 +254,10 @@ void ChunkedBLEProtocol::startSending(const std::string& data) {
 
 // Prepare send chunks
 void ChunkedBLEProtocol::prepareSendChunks(const std::string& data) {
-    const size_t CHUNK_SIZE = 512;
     sendChunks.clear();
     
-    for (size_t i = 0; i < data.length(); i += CHUNK_SIZE) {
-        size_t chunkSize = std::min(CHUNK_SIZE, data.length() - i);
+    for (size_t i = 0; i < data.length(); i += outgoing_chunk_size) {
+        size_t chunkSize = std::min((size_t)outgoing_chunk_size, data.length() - i);
         std::string chunk = data.substr(i, chunkSize);
         sendChunks.push_back(chunk);
     }
@@ -304,6 +302,12 @@ void ChunkedBLEProtocol::completeSending(bool success) {
     } else {
         Serial.println("[SEND] Data sending failed");
     }
+}
+
+// Set chunk size
+void ChunkedBLEProtocol::setChunkSize(uint16_t size) {
+    outgoing_chunk_size = size;
+    Serial.printf("[PROTOCOL] Chunk size updated to %d bytes\n", size);
 }
 
 // Callback setters
