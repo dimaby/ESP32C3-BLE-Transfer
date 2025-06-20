@@ -15,7 +15,7 @@ from bleak.backends.characteristic import BleakGATTCharacteristic
 # UUIDs
 DEFAULT_SERVICE_UUID = "5b18eb9b-747f-47da-b7b0-a4e503f9a00f"
 DEFAULT_CHAR_UUID = "8f8b49a2-9117-4e9f-acfc-fda4d0db7408"
-DEFAULT_CONTROL_CHAR_UUID = "12345678-1234-1234-1234-123456789012"
+DEFAULT_CONTROL_CHAR_UUID = "46e911a4-659b-4209-ad66-771c2f5c943d"
 
 # Control messages
 CONTROL_NOP = bytearray.fromhex("00")
