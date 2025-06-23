@@ -110,14 +110,7 @@ public:
      * @param callback Function called when complete data is received
      */
     void setDataReceivedCallback(DataReceivedCallback callback);
-    
-    /**
-     * Set callback for connection status changes
-     * 
-     * @param callback Function called when connection status changes
-     */
-    void setConnectionCallback(ConnectionCallback callback);
-    
+  
     /**
      * Set callback for transfer progress updates
      * 

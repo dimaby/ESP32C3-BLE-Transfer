@@ -1,4 +1,35 @@
+/**
+ * ChunkedBLEProtocol - Version 0.1
+ * 
+ * A protocol for chunked data transfer over BLE for ESP32 devices.
+ * 
+ * This protocol allows for reliable transfer of large data chunks over BLE by
+ * breaking them into smaller pieces and handling acknowledgments.
+ * 
+ * Integration Guide:
+ * ------------------
+ * 1. Create a BLEServer instance:
+ *    BLEServer* pServer = BLEDevice::createServer();
+ * 
+ * 2. Initialize the protocol with the server:
+ *    ChunkedBLEProtocol* protocol = new ChunkedBLEProtocol(pServer);
+ * 
+ * 3. Set up callbacks for data reception and connection status:
+ *    protocol->setDataReceivedCallback(onDataReceived);
+ *    protocol->setProgressCallback(onProgress);
+ * 
+ * 4. Optionally set chunk size (default is 512 bytes):
+ *    protocol->setChunkSize(512);
+ * 
+ * 5. To send data:
+ *    protocol->sendData(yourDataString);
+ * 
+ * The protocol handles all BLE service and characteristic setup internally,
+ * as well as chunking, reassembly, and acknowledgment of data transfers.
+ */
+
 #include "ChunkedBLEProtocol.h"
+#include "common.h"
 
 // Data characteristic callback class
 class DataCharacteristicCallbacks : public BLECharacteristicCallbacks {
@@ -11,7 +42,7 @@ public:
     void onWrite(BLECharacteristic* pCharacteristic) override {
         std::string value = pCharacteristic->getValue();
         if (value.length() > 0) {
-            Serial.printf("[DATA] Received %d bytes\n", value.length());
+            LOG_INFO("[DATA] Received %d bytes", value.length());
             protocol->processReceivedChunk((const uint8_t*)value.c_str(), value.length());
         }
     }
@@ -28,7 +59,7 @@ public:
     void onWrite(BLECharacteristic* pCharacteristic) override {
         std::string value = pCharacteristic->getValue();
         if (value.length() > 0) {
-            Serial.printf("[CONTROL] Received %d bytes\n", value.length());
+            LOG_INFO("[CONTROL] Received %d bytes", value.length());
             protocol->handleControlMessage();
         }
     }
@@ -44,11 +75,11 @@ ChunkedBLEProtocol::ChunkedBLEProtocol(BLEServer* server, const char* serviceUUI
     : bleServer(server), receiving(false), packet_size(0), num_pkgs_received(0),
       sending(false), outgoing_chunk_size(512), currentSendChunk(0), totalSendChunks(0) {
     
-    Serial.println("[PROTOCOL] Initializing ChunkedBLE Protocol");
+    LOG_INFO("[PROTOCOL] Initializing ChunkedBLE Protocol");
     
     // Create BLE service
     bleService = bleServer->createService(serviceUUID);
-    Serial.printf("[BLE] Service created with UUID: %s\n", serviceUUID);
+    LOG_INFO("[BLE] Service created with UUID: %s", serviceUUID);
     
     // Create data characteristic
     dataCharacteristic = bleService->createCharacteristic(
@@ -57,7 +88,7 @@ ChunkedBLEProtocol::ChunkedBLEProtocol(BLEServer* server, const char* serviceUUI
     );
     dataCharacteristic->setCallbacks(new DataCharacteristicCallbacks(this));
     dataCharacteristic->addDescriptor(new BLE2902());
-    Serial.printf("[BLE] Data characteristic created with UUID: %s\n", charUUID);
+    LOG_INFO("[BLE] Data characteristic created with UUID: %s", charUUID);
     
     // Create control characteristic
     controlCharacteristic = bleService->createCharacteristic(
@@ -70,16 +101,16 @@ ChunkedBLEProtocol::ChunkedBLEProtocol(BLEServer* server, const char* serviceUUI
     // Set initial control value
     const uint8_t initial_value = CONTROL_NOP;
     controlCharacteristic->setValue((uint8_t*)&initial_value, 1);
-    Serial.printf("[BLE] Control characteristic created with UUID: %s\n", DEFAULT_CONTROL_CHAR_UUID);
+    LOG_INFO("[BLE] Control characteristic created with UUID: %s", DEFAULT_CONTROL_CHAR_UUID);
     
     // Start the service
     bleService->start();
-    Serial.println("[BLE] Service started successfully");
+    LOG_INFO("[BLE] Service started successfully");
     
     // Reset statistics
     resetStatistics();
     
-    Serial.println("[PROTOCOL] ChunkedBLE Protocol initialization complete");
+    LOG_INFO("[PROTOCOL] ChunkedBLE Protocol initialization complete");
 }
 
 // Destructor
@@ -97,14 +128,14 @@ void ChunkedBLEProtocol::handleControlMessage() {
         std::string chunkStr = receivedData.substr(4);
         int ackChunkNumber = std::atoi(chunkStr.c_str());
         
-        Serial.printf("[ACK] Received ACK for chunk %d\n", ackChunkNumber);
+        LOG_INFO("[ACK] Received ACK for chunk %d", ackChunkNumber);
         
         // If we're sending data, continue with next chunk
         if (sending && ackChunkNumber == currentSendChunk) {
-            Serial.println("[SEND] ACK received, sending next chunk...");
+            LOG_INFO("[SEND] ACK received, sending next chunk...");
             sendNextChunk();
         } else {
-            Serial.printf("[WARNING] Unexpected ACK: chunk %d, expected %d, sending=%s\n", 
+            LOG_ERROR("[WARNING] Unexpected ACK: chunk %d, expected %d, sending=%s", 
                          ackChunkNumber, currentSendChunk, sending ? "true" : "false");
         }
         return;
@@ -113,19 +144,19 @@ void ChunkedBLEProtocol::handleControlMessage() {
     // Handle binary control messages
     uint8_t controlValue = receivedData.c_str()[0];
     
-    Serial.printf("[CONTROL] Processing control message: 0x%02X\n", controlValue);
+    LOG_INFO("[CONTROL] Processing control message: 0x%02X", controlValue);
     
     switch (controlValue) {
         case CONTROL_REQUEST:
-            Serial.println("[CONTROL] Transfer request received");
+            LOG_INFO("[CONTROL] Transfer request received");
             startReceiving();
             break;
         case CONTROL_DONE:
-            Serial.println("[CONTROL] Transfer done received");
+            LOG_INFO("[CONTROL] Transfer done received");
             completeReceiving(true);
             break;
         default:
-            Serial.printf("[CONTROL] Unknown control value: 0x%02X\n", controlValue);
+            LOG_ERROR("[CONTROL] Unknown control value: 0x%02X", controlValue);
             break;
     }
 }
@@ -138,7 +169,7 @@ void ChunkedBLEProtocol::handleDataMessage() {
 
 // Start receiving process (based on OTA startOtaUpdate)
 void ChunkedBLEProtocol::startReceiving() {
-    Serial.println("[TRANSFER] Starting data reception");
+    LOG_INFO("[TRANSFER] Starting data reception");
     
     // Initialize receiving state (like in OTA)
     receiving = true;
@@ -150,7 +181,7 @@ void ChunkedBLEProtocol::startReceiving() {
     controlCharacteristic->setValue((uint8_t*)&controlValue, 1);
     controlCharacteristic->notify();
     
-    Serial.println("[TRANSFER] Sent ACK response, ready to receive data");
+    LOG_INFO("[TRANSFER] Sent ACK response, ready to receive data");
 }
 
 // Complete receiving process (based on OTA completeOtaUpdate)
@@ -159,7 +190,7 @@ void ChunkedBLEProtocol::completeReceiving(bool success) {
     uint8_t controlValue;
     
     if (success && !receivedData.empty()) {
-        Serial.printf("[TRANSFER] Reception completed successfully! Total: %d bytes\n", receivedData.size());
+        LOG_INFO("[TRANSFER] Reception completed successfully! Total: %d bytes", receivedData.size());
         
         // Convert received data to string for callback
         std::string completeData(receivedData.begin(), receivedData.end());
@@ -172,7 +203,7 @@ void ChunkedBLEProtocol::completeReceiving(bool success) {
         controlValue = CONTROL_DONE_ACK; // DONE_ACK
         stats.transfersCompleted++; // Update stats only on success
     } else {
-        Serial.println("[ERROR] Reception failed or no data received");
+        LOG_ERROR("[ERROR] Reception failed or no data received");
         controlValue = CONTROL_DONE_NAK; // DONE_NAK
     }
     
@@ -180,7 +211,7 @@ void ChunkedBLEProtocol::completeReceiving(bool success) {
     controlCharacteristic->setValue((uint8_t*)&controlValue, 1);
     controlCharacteristic->notify();
     
-    Serial.printf("[TRANSFER] Sent final %s response\n", 
+    LOG_INFO("[TRANSFER] Sent final %s response", 
                   (controlValue == CONTROL_DONE_ACK) ? "ACK" : "NAK");
     
     // Clear received data buffer
@@ -196,7 +227,7 @@ void ChunkedBLEProtocol::writeReceivedData(const uint8_t* data, size_t length) {
         
         num_pkgs_received++;
         
-        Serial.printf("[DATA] Received chunk %d (%d bytes), total: %d bytes\n", 
+        LOG_INFO("[DATA] Received chunk %d (%d bytes), total: %d bytes", 
                       num_pkgs_received, length, receivedData.size());
         
         // Simple progress callback
@@ -204,7 +235,7 @@ void ChunkedBLEProtocol::writeReceivedData(const uint8_t* data, size_t length) {
             progressCallback(num_pkgs_received, 0, true); // 0 = unknown total
         }
     } else {
-        Serial.println("[WARNING] Received data but not in receiving mode");
+        LOG_ERROR("[WARNING] Received data but not in receiving mode");
     }
 }
 
@@ -215,19 +246,19 @@ void ChunkedBLEProtocol::processReceivedChunk(const uint8_t* data, size_t length
 
 // Send data (full implementation - ESP32 to Client data transfer)
 bool ChunkedBLEProtocol::sendData(const std::string& data) {
-    Serial.println("[DEBUG] sendData() method called");
+    LOG_INFO("[DEBUG] sendData() method called");
     
     if (sending) {
-        Serial.println("[ERROR] Already sending data, cannot start new transfer");
+        LOG_ERROR("[ERROR] Already sending data, cannot start new transfer");
         return false;
     }
     
     if (data.empty()) {
-        Serial.println("[ERROR] Cannot send empty data");
+        LOG_ERROR("[ERROR] Cannot send empty data");
         return false;
     }
     
-    Serial.printf("[SEND] Starting to send %d bytes\n", data.length());
+    LOG_INFO("[SEND] Starting to send %d bytes", data.length());
     
     // Start sending process
     startSending(data);
@@ -243,7 +274,7 @@ void ChunkedBLEProtocol::startSending(const std::string& data) {
     // Calculate chunk size (similar to Python client - use MTU-based size)
     totalSendChunks = (data.length() + outgoing_chunk_size - 1) / outgoing_chunk_size;
     
-    Serial.printf("[SEND] Preparing %d chunks of max %d bytes each\n", totalSendChunks, outgoing_chunk_size);
+    LOG_INFO("[SEND] Preparing %d chunks of max %d bytes each", totalSendChunks, outgoing_chunk_size);
     
     // Prepare all chunks
     prepareSendChunks(data);
@@ -262,7 +293,7 @@ void ChunkedBLEProtocol::prepareSendChunks(const std::string& data) {
         sendChunks.push_back(chunk);
     }
     
-    Serial.printf("[SEND] Prepared %d chunks\n", sendChunks.size());
+    LOG_INFO("[SEND] Prepared %d chunks", sendChunks.size());
 }
 
 // Send next chunk
@@ -275,7 +306,7 @@ void ChunkedBLEProtocol::sendNextChunk() {
     
     const std::string& chunk = sendChunks[currentSendChunk];
     
-    Serial.printf("[SEND] Sending chunk %d/%d (%d bytes)\n", 
+    LOG_INFO("[SEND] Sending chunk %d/%d (%d bytes)", 
                   currentSendChunk + 1, totalSendChunks, chunk.length());
     
     // Send chunk over BLE
@@ -286,7 +317,7 @@ void ChunkedBLEProtocol::sendNextChunk() {
     
     // TODO: Wait for ACK before sending next chunk
     // For now, only send one chunk and stop (no recursive call)
-    Serial.println("[SEND] Chunk sent, waiting for ACK implementation...");
+    LOG_INFO("[SEND] Chunk sent, waiting for ACK implementation...");
 }
 
 // Complete sending process
@@ -297,26 +328,22 @@ void ChunkedBLEProtocol::completeSending(bool success) {
     sendChunks.clear();
     
     if (success) {
-        Serial.println("[SEND] Data sending completed successfully");
+        LOG_INFO("[SEND] Data sending completed successfully");
         stats.transfersCompleted++;
     } else {
-        Serial.println("[SEND] Data sending failed");
+        LOG_ERROR("[SEND] Data sending failed");
     }
 }
 
 // Set chunk size
 void ChunkedBLEProtocol::setChunkSize(uint16_t size) {
     outgoing_chunk_size = size;
-    Serial.printf("[PROTOCOL] Chunk size updated to %d bytes\n", size);
+    LOG_INFO("[PROTOCOL] Chunk size updated to %d bytes", size);
 }
 
 // Callback setters
 void ChunkedBLEProtocol::setDataReceivedCallback(DataReceivedCallback callback) {
     dataReceivedCallback = callback;
-}
-
-void ChunkedBLEProtocol::setConnectionCallback(ConnectionCallback callback) {
-    connectionCallback = callback;
 }
 
 void ChunkedBLEProtocol::setProgressCallback(ProgressCallback callback) {
@@ -338,11 +365,11 @@ bool ChunkedBLEProtocol::isTransferInProgress() const {
 
 void ChunkedBLEProtocol::cancelCurrentTransfer(const char* reason) {
     if (receiving) {
-        Serial.printf("[TRANSFER] Cancelling transfer: %s\n", reason);
+        LOG_INFO("[TRANSFER] Cancelling transfer: %s", reason);
         receiving = false;
         receivedData.clear();
         num_pkgs_received = 0;
     } else {
-        Serial.println("[TRANSFER] No transfer in progress to cancel");
+        LOG_INFO("[TRANSFER] No transfer in progress to cancel");
     }
 }
