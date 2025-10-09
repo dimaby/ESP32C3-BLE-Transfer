@@ -88,6 +88,8 @@ pio run -t upload
 \### Python client
 
 ```bash
+python3 -m venv myenv
+source myenv/bin/activate
 pip install bleak
 python simple_ble.py test.json  # sends file and waits for response
 ```
